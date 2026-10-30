@@ -1,0 +1,7 @@
+# Jieli BR23 im ROM-Download-Modus (USB 4c4a:2342, „BR23UBOOT1.00“): SCSI-Generic-Gerät für die Gruppe plugdev
+# freigeben, damit `c2lite-custom download …` ohne sudo lesen und schreiben kann.
+# Einrichten: sudo cp ~/mobapad-c2lite/werkzeuge/99-jieli-br23.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+SUBSYSTEM=="scsi_generic", ATTRS{idVendor}=="4c4a", ATTRS{idProduct}=="2342", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Mobapad C2 Lite im PC-Modus (Werks-Firmware und C2 Lite Custom ab 10a: USB 2345:e06e, XInput): Zugriff für den angemeldeten
+# Benutzer auf die XInput-Schnittstelle (Untersuchung der Werks-Firmware ohne sudo).
+SUBSYSTEM=="usb", ATTR{idVendor}=="2345", ATTR{idProduct}=="e06e", MODE="0660", GROUP="plugdev", TAG+="uaccess"

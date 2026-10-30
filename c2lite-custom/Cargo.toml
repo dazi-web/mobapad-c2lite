@@ -1,0 +1,24 @@
+[package]
+name = "c2lite-custom"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+btleplug = "0.13.5"
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "accesskit"] }
+egui-phosphor = "0.14.0"
+futures = "0.3.34"
+ratatui = "0.30.2"
+rfd = "0.17.2"
+serialport = { version = "4.10.1", default-features = false }
+tokio = { version = "1.54.1", features = ["rt", "time", "macros"] }
+uuid = "1.29.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libdbus-sys = { version = "0.2.7", features = ["vendored"] }
+libc = "0.2"   # SG_IO (Download-Modus), HCI-User-Kanal
+aes = "0.9.3"  # Kopplung mit der Werks-Firmware (SMP c1/s1)
+
+[dev-dependencies]
+aes = "0.9.3"
+libc = "0.2"

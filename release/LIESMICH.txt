@@ -1,0 +1,13 @@
+C2 Lite Custom, Stufe 11c (Firmware für den Mobapad C2 Lite)
+
+jl_isd.bin          Erstinstallation von der Werks-Firmware: c2lite-custom, Seite „Installieren“
+                    (oder: c2lite-custom installieren release/jl_isd.bin)
+db_update_data.bin  Update, wenn C2 Lite Custom schon läuft: c2lite-custom, Seite „Firmware“
+                    (oder: c2lite-custom update release/db_update_data.bin)
+SHA256SUMS          Prüfsummen: sha256sum -c SHA256SUMS
+
+Vorher den Abschnitt „Risiken“ in der README lesen. Nutzung auf eigenes Risiko.
+
+English: jl_isd.bin = first install from the factory firmware (c2lite-custom, page "Installieren");
+db_update_data.bin = update when C2 Lite Custom is already running (page "Firmware" or `c2lite-custom update`).
+Check with `sha256sum -c SHA256SUMS`. Read the "Risks" section in the README first. Use at your own risk.
