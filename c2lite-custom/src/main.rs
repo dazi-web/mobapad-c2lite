@@ -9,8 +9,15 @@ mod download;
 mod installieren;
 #[cfg(target_os = "linux")]
 mod werk_ble;
+#[cfg(target_os = "linux")]
+mod werk_usb;
+#[cfg(target_os = "linux")]
+mod ff;
+#[cfg(target_os = "linux")]
+mod bt_pc;
 mod geraet;
 mod gui;
+mod paket;
 mod test;
 mod wecken;
 
@@ -56,10 +63,14 @@ Befehle:
   wecken lernen                dasselbe ohne Laptop: der Controller lauscht 30 s selbst (am Gerät: Licht + Home)
   wecken test                  Wecksignal jetzt senden (Switch 2 im Standby, Controller nicht verbunden)
   wecken zuruecksetzen         Kennung löschen (eigene Adresse, weckt die Switch 2 nicht)
-  installieren <jl_isd.bin> [--probelauf]
+  installieren [jl_isd.bin] [--probelauf]
                                Erstinstallation auf einer C2 Lite mit Werks-Firmware (Linux, ohne Zusatzhardware):
                                Bluetooth koppelt, Brücke als Update, dann USB-Kabel -> Sicherung + C2 Lite Custom. Fragt einmal
-                               nach dem Passwort. --probelauf: nur prüfen und koppeln, nichts verändern
+                               nach dem Passwort. --probelauf: nur prüfen und koppeln, nichts verändern. Ohne Datei: eingebaute Firmware
+  installieren [jl_isd.bin] --usb [--probelauf]
+                               dasselbe nur über das USB-Kabel (Werks-Firmware, Home + Y + X, docs/WERKS-DOWNLOAD.md):
+                               ohne Kabel einschalten, Kabel anstecken, bei Brummen Home + Y + X halten. --probelauf:
+                               Download-Modus, Sicherung lesen, neu starten, nichts schreiben
   werk-zurueck [werk-sicherung.bin]
                                zurück zur Werks-Firmware aus der Sicherung von „installieren“ (Vorgabe: die neueste
                                in ~/c2lite-sicherung). Controller am USB; sichert vorher den aktuellen Stand
@@ -110,6 +121,9 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("installieren-kern") => {
             return if installieren::kern(&args[1..]).is_ok() { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+        }
+        Some("installieren-usb-kern") => {
+            return if installieren::usb_kern(&args[1..]).is_ok() { ExitCode::SUCCESS } else { ExitCode::FAILURE };
         }
         Some("installieren") => return installieren_befehl(&args[1..]),
         Some("werk-zurueck-kern") => {
@@ -265,19 +279,25 @@ fn wecken_befehl(g: &mut dyn Kanal, was: Option<&str>) -> Result<(), String> {
     }
 }
 
-/// Erstinstallation auf der Kommandozeile: „installieren <jl_isd.bin> [--probelauf]“
+/// Erstinstallation auf der Kommandozeile: „installieren [jl_isd.bin] [--usb] [--probelauf]“ (ohne Datei: eingebaute Firmware)
 #[cfg(target_os = "linux")]
 fn installieren_befehl(a: &[String]) -> ExitCode {
     let probelauf = a.iter().any(|x| x == "--probelauf");
-    let Some(firmware) = a.iter().find(|x| !x.starts_with("--")) else {
-        eprintln!("Aufruf: c2lite-custom installieren <jl_isd.bin> [--probelauf]");
-        return ExitCode::FAILURE;
-    };
+    let usb = a.iter().any(|x| x == "--usb");
+    let firmware = a.iter().find(|x| !x.starts_with("--")).map(std::path::Path::new);
+    match firmware {
+        Some(p) => println!("Firmware: {}", p.display()),
+        None => println!("Firmware: eingebaut ({})", installieren::eingebaut_stand()),
+    }
     if probelauf {
-        println!("PROBELAUF: Es wird nichts verändert, nur geprüft, ob alles bereit ist.");
+        println!("PROBELAUF: Es wird nichts geschrieben, nur geprüft, ob alles bereit ist.");
     }
     let mut ausgabe = meldung_ausgeben();
-    ergebnis_ausgeben(installieren::starten(std::path::Path::new(firmware), probelauf, &mut ausgabe))
+    ergebnis_ausgeben(if usb {
+        installieren::starten_usb(firmware, probelauf, &mut ausgabe)
+    } else {
+        installieren::starten(firmware, probelauf, &mut ausgabe)
+    })
 }
 
 /// Rückweg zur Werks-Firmware: „werk-zurueck [werk-sicherung.bin]“ (Vorgabe: neueste Sicherung aus „installieren“)

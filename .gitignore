@@ -16,6 +16,9 @@
 !/docs/
 /docs/*
 !/docs/*.md
+!/docs/bilder/
+/docs/bilder/*
+!/docs/bilder/*.png
 
 !/c2lite-custom/
 /c2lite-custom/*
@@ -39,6 +42,7 @@
 !/werkzeuge/sdk-bauen.sh
 !/werkzeuge/soll_bauen.py
 !/werkzeuge/test_pro2_krypto.c
+!/werkzeuge/usb_wachhalten.py
 
 !/c6-rettung/
 /c6-*/*

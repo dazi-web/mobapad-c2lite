@@ -6,6 +6,8 @@ mod bild;
 mod daten;
 #[cfg(target_os = "linux")]
 mod installieren;
+#[cfg(target_os = "linux")]
+mod bluetooth;
 mod stil;
 
 use crate::geraet::{Status, TASTEN as ROLLEN};
@@ -26,6 +28,8 @@ pub fn starten() -> Result<(), String> {
         viewport: egui::ViewportBuilder::default()
             .with_title("C2 Lite")
             .with_app_id("c2lite-custom")
+            // Programmsymbol (assets/icon.svg, als PNG eingebettet)
+            .with_icon(std::sync::Arc::new(eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon.png")).unwrap_or_default()))
             .with_inner_size([1100.0, 760.0])
             .with_min_inner_size([880.0, 600.0]),
         ..Default::default()
@@ -91,6 +95,10 @@ struct App {
     update_datei: Option<(PathBuf, Vec<u8>)>,
     update_fortschritt: Option<f32>,
     neu_verbinden_ab: Option<Instant>,
+    /// weitere stille Verbindungsversuche nach Neustart, Update oder Installation (der Controller braucht unterschiedlich lange)
+    neu_verbinden_versuche: u8,
+    /// Platz und Name, deren Speichern noch auf die Antwort wartet (Meldung erst nach Erfolg)
+    belegung_speichern: Option<(usize, String)>,
     /// „switch diag“ erneut lesen (nach dem Lernen am Controller)
     neu_laden_ab: Option<Instant>,
     diag_ausgabe: Vec<String>,
@@ -99,6 +107,10 @@ struct App {
     frage_werkszustand: bool,
     #[cfg(target_os = "linux")]
     installation: installieren::Installation,
+    #[cfg(target_os = "linux")]
+    bt_pc: bluetooth::BtPc,
+    /// Pro Controller 2 aus „pro2 status“: (klassisch, gekoppelt); None = unbekannt (alte Firmware)
+    pro2: Option<(bool, bool)>,
     /// Weckkennung aus „switch diag“: None = noch nicht gelesen, Some(None) = nicht eingerichtet
     weck: Option<Option<Kennung>>,
     /// läuft „Wecken einrichten“: Abbruch-Flag und Start
@@ -117,9 +129,13 @@ impl App {
         let (tx, arbeiter_rx) = mpsc::channel();
         let (arbeiter_tx, rx) = mpsc::channel();
         arbeiter::starten(cc.egui_ctx.clone(), arbeiter_rx, arbeiter_tx);
-        // Beim Start einmal leise über USB versuchen
-        let _ = tx.send(Auftrag::Verbinden(Weg::Usb));
-        App {
+        // Beim Start einmal leise über USB versuchen (nicht im Vorführmodus: der zeigt nur Bilder)
+        let demo = std::env::var("C2LITE_DEMO").ok();
+        if demo.is_none() {
+            let _ = tx.send(Auftrag::Verbinden(Weg::Usb));
+        }
+        #[allow(unused_mut)]
+        let mut app = App {
             tx,
             rx,
             // C2LITE_SEITE=test|belegung|licht|firmware|diagnose|backup: direkt auf dieser Seite starten
@@ -152,6 +168,8 @@ impl App {
             update_datei: None,
             update_fortschritt: None,
             neu_verbinden_ab: None,
+            neu_verbinden_versuche: 0,
+            belegung_speichern: None,
             neu_laden_ab: None,
             diag_ausgabe: Vec::new(),
             diag_eingabe: String::new(),
@@ -159,9 +177,22 @@ impl App {
             frage_werkszustand: false,
             #[cfg(target_os = "linux")]
             installation: Default::default(),
+            #[cfg(target_os = "linux")]
+            bt_pc: Default::default(),
+            pro2: None,
             weck: None,
             weck_lauscht: None,
+        };
+        // C2LITE_DEMO=tasten|uebertragung|fertig: Ablauf-Anzeige der Installation für Screenshots, ohne Gerät
+        #[cfg(target_os = "linux")]
+        if let Some(d) = demo {
+            if d != "seite" {
+                app.installation.vorfuehren(&d);
+            }
+            app.seite = Seite::Installieren;
+            app.verbindung = Verbindung::Getrennt;
         }
+        app
     }
 
     fn verbunden(&self) -> bool {
@@ -179,6 +210,7 @@ impl App {
     fn alles_laden(&self) {
         self.senden(Zweck::Info, vec!["info".into()]);
         self.senden(Zweck::SwitchDiag, vec!["switch diag".into()]);
+        self.senden(Zweck::Pro2, vec!["pro2 status".into()]);
         self.senden(Zweck::Einstellungen, vec!["einstellungen".into()]);
         self.senden(Zweck::Belegung, vec!["belegung".into()]);
     }
@@ -189,6 +221,28 @@ impl App {
         let _ = self.tx.send(Auftrag::Verbinden(weg));
     }
 
+    /// Nach Neustart, Update oder Installation: ab `in_s` Sekunden still neu verbinden, bis zu ~20 s lang
+    fn spaeter_verbinden(&mut self, in_s: u64) {
+        self.neu_verbinden_ab = Some(Instant::now() + Duration::from_secs(in_s));
+        self.neu_verbinden_versuche = 8;
+    }
+
+    /// Läuft gerade eine Installation oder der Rückweg? (dann keine eigene Verbindung und keine Seitenwechsel)
+    fn installation_laeuft(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return self.installation.laeuft();
+        #[cfg(not(target_os = "linux"))]
+        false
+    }
+
+    /// War der letzte Lauf ein erfolgreicher Rückweg zur Werks-Firmware?
+    fn zurueck_erfolgreich(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        return self.installation.zurueck_erfolgreich();
+        #[cfg(not(target_os = "linux"))]
+        false
+    }
+
     fn meldungen_verarbeiten(&mut self) {
         while let Ok(m) = self.rx.try_recv() {
             match m {
@@ -196,6 +250,7 @@ impl App {
                 Meldung::Verbunden(w, name) => {
                     self.verbindung = Verbindung::Verbunden(w, name);
                     self.fehler = None;
+                    self.neu_verbinden_versuche = 0;
                     self.live = false;
                     self.alles_laden();
                 }
@@ -204,7 +259,11 @@ impl App {
                     self.verbindung = Verbindung::Getrennt;
                     self.live = false;
                     self.status = None;
-                    if let Some(g) = grund {
+                    if grund.is_some() && !war_verbunden && self.neu_verbinden_versuche > 0 {
+                        // Controller startet noch: still noch einmal versuchen statt einen Fehler zu zeigen
+                        self.neu_verbinden_versuche -= 1;
+                        self.neu_verbinden_ab = Some(Instant::now() + Duration::from_millis(2500));
+                    } else if let Some(g) = grund {
                         // Der stille Versuch beim Start soll keinen Fehler zeigen
                         if war_verbunden || self.letzte_info.elapsed() > Duration::from_secs(2) {
                             self.fehler = Some(g);
@@ -223,7 +282,7 @@ impl App {
                         Ok(()) => {
                             self.melden("Update übertragen und geprüft. Der Controller startet neu.", false);
                             self.update_datei = None;
-                            self.neu_verbinden_ab = Some(Instant::now() + Duration::from_secs(7));
+                            self.spaeter_verbinden(7);
                         }
                         Err(e) => self.melden(format!("Update abgebrochen: {e}. Die bisherige Firmware läuft weiter."), true),
                     }
@@ -248,13 +307,17 @@ impl App {
         let zeilen = match ergebnis {
             Ok(z) => z,
             Err(e) => {
-                if zweck != Zweck::Info {
+                if zweck == Zweck::Belegung {
+                    self.belegung_speichern = None;
+                }
+                if zweck != Zweck::Info && zweck != Zweck::Pro2 {
                     self.melden(e, true);
                 }
                 return;
             }
         };
-        if let Some(f) = zeilen.iter().find(|z| z.starts_with("fehler:")) {
+        let fehler = zeilen.iter().find(|z| z.starts_with("fehler:")).cloned();
+        if let (Some(f), false) = (&fehler, zweck == Zweck::Pro2) {
             self.melden(f.trim_start_matches("fehler:").trim().to_string(), true);
         }
         match zweck {
@@ -279,7 +342,20 @@ impl App {
             }
             Zweck::Belegung => {
                 let b = Belegung::lesen(&zeilen);
-                self.entwurf = b.plaetze.clone();
+                let gespeichert = self.belegung_speichern.take();
+                for k in 0..b.plaetze.len() {
+                    // Einen Entwurf nur ersetzen, wenn er unverändert war oder gerade gespeichert wurde; sonst ginge
+                    // Bearbeitetes verloren (z. B. Makro auf Rück 2 offen, dann ein Turbo-Knopf gedrückt)
+                    let unveraendert = self.belegung.as_ref().is_none_or(|alt| self.entwurf[k] == alt.plaetze[k]);
+                    if unveraendert || gespeichert.as_ref().is_some_and(|(i, _)| *i == k) {
+                        self.entwurf[k] = b.plaetze[k].clone();
+                    }
+                }
+                if let Some((_, name)) = gespeichert {
+                    if fehler.is_none() {
+                        self.melden(format!("{name} gespeichert."), false);
+                    }
+                }
                 self.belegung = Some(b);
             }
             Zweck::Diagnose => {
@@ -288,6 +364,18 @@ impl App {
                 if n > 2000 {
                     self.diag_ausgabe.drain(..n - 2000);
                 }
+            }
+            Zweck::Pro2 => {
+                // „ok: pro2 aktiv=1 gewaehlt=0 klassisch=0 gekoppelt=1 konsole=… …“
+                let wert = |schluessel: &str| {
+                    zeilen.iter().find(|z| z.contains("pro2 aktiv=")).and_then(|z| {
+                        z.split_whitespace().find_map(|t| t.strip_prefix(schluessel)).map(|v| v == "1")
+                    })
+                };
+                self.pro2 = match (wert("klassisch="), wert("gekoppelt=")) {
+                    (Some(k), Some(g)) => Some((k, g)),
+                    _ => None,
+                };
             }
             Zweck::Still => {}
             Zweck::Backup => self.backup_speichern(&zeilen),
@@ -389,6 +477,13 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.meldungen_verarbeiten();
+        // Installation/Rückweg: Meldungen jedes Bild abholen (nicht nur auf der Seite), und solange es läuft, dort bleiben,
+        // damit keine Aufforderung („Home + Y + X“, „Kabel anstecken“) unbemerkt bleibt
+        #[cfg(target_os = "linux")]
+        self.installation_abholen(&ctx);
+        if self.installation_laeuft() {
+            self.seite = Seite::Installieren;
+        }
         self.einstellungen_abgleichen(&ctx);
         if let Some(ab) = self.neu_verbinden_ab {
             if Instant::now() >= ab {
@@ -492,10 +587,11 @@ impl App {
                 egui::FontId::proportional(15.0),
                 farbe,
             );
-            if antwort.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            if antwort.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !self.installation_laeuft() {
                 self.seite = *seite;
             }
         }
+        let gesperrt = self.installation_laeuft();
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             match &self.verbindung {
@@ -523,21 +619,24 @@ impl App {
                     });
                 }
                 Verbindung::Getrennt => {
-                    if ui.add_sized([ui.available_width(), 32.0], egui::Button::new(format!("{}  Bluetooth", icon::BLUETOOTH))).clicked() {
-                        self.verbinden(Weg::Bluetooth);
-                    }
-                    let w = ui.available_width();
-                    let c2 = farben(ui.ctx());
-                    if ui
-                        .add_sized(
-                            [w, 34.0],
-                            egui::Button::new(RichText::new(format!("{}  USB verbinden", icon::USB)).color(c2.akzent_text)).fill(c2.akzent),
-                        )
-                        .clicked()
-                    {
-                        self.verbinden(Weg::Usb);
-                    }
-                    ui.label(RichText::new("Nicht verbunden").color(c.schwach));
+                    // Während Installation/Rückweg gehört der Controller dem Installer: nicht dazwischen verbinden
+                    ui.add_enabled_ui(!gesperrt, |ui| {
+                        if ui.add_sized([ui.available_width(), 32.0], egui::Button::new(format!("{}  Bluetooth", icon::BLUETOOTH))).clicked() {
+                            self.verbinden(Weg::Bluetooth);
+                        }
+                        let w = ui.available_width();
+                        let c2 = farben(ui.ctx());
+                        if ui
+                            .add_sized(
+                                [w, 34.0],
+                                egui::Button::new(RichText::new(format!("{}  USB verbinden", icon::USB)).color(c2.akzent_text)).fill(c2.akzent),
+                            )
+                            .clicked()
+                        {
+                            self.verbinden(Weg::Usb);
+                        }
+                    });
+                    ui.label(RichText::new(if gesperrt { "Installation läuft" } else { "Nicht verbunden" }).color(c.schwach));
                 }
             }
         });
@@ -560,13 +659,14 @@ impl App {
             if let Some(art) = usb_ohne_custom() {
                 // Werks-Firmware oder Download-Modus am USB: Laien direkt zur Installation führen
                 let (titel_text, text) = match art {
-                    UsbArt::Werk => (
-                        "C2 Lite mit Werks-Firmware erkannt",
-                        "Auf diesem Controller läuft noch die Firmware von Mobapad. Auf der Seite „Installieren“ kommt C2 Lite Custom drauf.",
-                    ),
+                    UsbArt::Werk if self.zurueck_erfolgreich() => {
+                        ("Werks-Firmware läuft wieder", "Mobapad-App und alte Kopplungen gehen wieder. Installieren geht jederzeit erneut.")
+                    }
+                    UsbArt::Werk => ("Werks-Firmware erkannt", "Auf der Seite „Installieren“ kommt C2 Lite Custom drauf."),
+                    // Läuft keine Installation, wartet der Controller vergeblich: zum erneuten Start führen statt „abwarten“
                     UsbArt::Download => (
-                        "C2 Lite im Download-Modus",
-                        "Der Controller wartet auf neue Firmware. Läuft gerade eine Installation, einfach abwarten.",
+                        "Controller im Download-Modus",
+                        "Er wartet auf Firmware. Auf „Installieren“ die Installation oder den Rückweg neu starten. Kabel stecken lassen.",
                     ),
                 };
                 ui.heading(titel_text);
@@ -585,8 +685,7 @@ impl App {
             ui.heading("Kein Controller verbunden");
             ui.add_space(4.0);
             ui.label(
-                RichText::new("Stecke den C2 Lite per USB-Kabel an (Schieber auf PC) oder verbinde ihn per Bluetooth.")
-                    .color(c.schwach),
+                RichText::new("USB-Kabel anstecken (Schieber auf PC) oder per Bluetooth verbinden.").color(c.schwach),
             );
             ui.add_space(16.0);
             match self.verbindung {
@@ -730,7 +829,7 @@ impl App {
             ui.horizontal(|ui| {
                 if ui.button(format!("{}  Neu starten", icon::ARROWS_CLOCKWISE)).clicked() {
                     self.senden(Zweck::Still, vec!["neustart".into()]);
-                    self.neu_verbinden_ab = Some(Instant::now() + Duration::from_secs(6));
+                    self.spaeter_verbinden(6);
                     self.melden("Controller startet neu.", false);
                 }
                 if ui.button(format!("{}  Download-Modus", icon::DOWNLOAD_SIMPLE)).clicked() {
@@ -753,6 +852,8 @@ impl App {
                     if knopf_haupt(ui, "Download-Modus starten").clicked() {
                         self.frage_download = false;
                         self.senden(Zweck::Still, vec!["download-modus".into()]);
+                        // Danach gibt es keinen Befehlskanal mehr: sofort trennen statt alte Werte weiter anzuzeigen
+                        let _ = self.tx.send(Auftrag::Trennen);
                     }
                 });
             }
@@ -768,7 +869,7 @@ impl App {
                     ("Licht + Taste", "Turbo dieser Taste: beim Halten, automatisch, aus"),
                     ("Licht + linker Stick", "links/rechts Turbo-Tempo, hoch/runter Vibration"),
                     ("Licht + rechter Stick", "hoch/runter Helligkeit"),
-                    ("Licht + Home", "Switch-2-Weckkennung lernen: Joy-Con 2 abnehmen, Taste drücken (Logo orange)"),
+                    ("Licht + Home", "nur klassischer Pro Controller: Joy-Con-2-Weckkennung lernen (Logo orange)"),
                     ("Home + Minus 5 s", "Download-Modus zum Flashen"),
                     ("Schieber", "PC, Aus, Switch"),
                 ] {
@@ -783,8 +884,30 @@ impl App {
     /// Home am Controller weckt die Switch 2: dafür braucht der Controller die Kennung eines Joy-Con 2
     fn wecken_karte(&mut self, ui: &mut egui::Ui) {
         let c = farben(ui.ctx());
+        // Ab Stufe 11 (Standard): Pro Controller 2, weckt mit der eigenen Adresse; keine Joy-Con-Kennung nötig
+        if let Some((false, gekoppelt)) = self.pro2 {
+            karte(ui, |ui| {
+                titel(ui, "Switch 2");
+                ui.add_space(4.0);
+                if gekoppelt {
+                    ui.label(
+                        RichText::new(format!("{}  Als Pro Controller 2 gekoppelt: Home weckt die Switch 2", icon::CHECK_CIRCLE))
+                            .color(c.akzent),
+                    );
+                    hinweis(ui, "Mit der eigenen Adresse, ohne Joy-Con.");
+                } else {
+                    ui.label("Noch nicht mit einer Switch 2 gekoppelt.");
+                    hinweis(
+                        ui,
+                        "Schieber auf Switch, an der Switch 2 „Griff/Reihenfolge ändern“ öffnen: Sie koppelt von selbst (kein \
+                         Kabel nötig). Danach weckt Home die Konsole.",
+                    );
+                }
+            });
+            return;
+        }
         karte(ui, |ui| {
-            titel(ui, "Switch 2 aufwecken");
+            titel(ui, "Switch 2 aufwecken (klassischer Pro Controller)");
             ui.add_space(4.0);
             match &self.weck {
                 Some(Some(k)) => {
@@ -901,6 +1024,11 @@ impl App {
                 });
             });
         });
+        #[cfg(target_os = "linux")]
+        {
+            ui.add_space(12.0);
+            self.bluetooth_karte(ui);
+        }
     }
 
     fn belegung_seite(&mut self, ui: &mut egui::Ui) {
@@ -971,7 +1099,7 @@ impl App {
             let mut b = self.entwurf[i].befehle(pname);
             b.push("belegung".into());
             self.senden(Zweck::Belegung, b);
-            self.melden(format!("{plabel} gespeichert."), false);
+            self.belegung_speichern = Some((i, plabel.to_string()));
         }
         if verwerfen {
             self.entwurf[i] = beleg.plaetze[i].clone();
@@ -1117,27 +1245,62 @@ impl App {
 
     fn firmware_seite(&mut self, ui: &mut egui::Ui) {
         let c = farben(ui.ctx());
-        self.kopf(ui, "Firmware", "Updates landen in der freien Speicherhälfte. Bricht etwas ab, läuft die bisherige Firmware weiter.");
+        self.kopf(ui, "Firmware", "Updates für C2 Lite Custom. Bricht etwas ab, läuft die alte Version weiter.");
+        let installiert = self.info.as_ref().map(|i| i.stand.clone());
+        let im_programm = crate::paket::stufe();
         karte(ui, |ui| {
-            titel(ui, "Installiert");
-            match &self.info {
-                Some(i) => {
-                    ui.label(format!("Stand {}, gebaut {}", i.stand, i.gebaut));
+            egui::Grid::new("staende").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
+                ui.label(RichText::new("Auf dem Controller").color(c.schwach));
+                match &installiert {
+                    Some(s) => ui.label(RichText::new(format!("Stufe {s}")).strong()),
+                    None => ui.spinner(),
+                };
+                ui.end_row();
+                ui.label(RichText::new("Im Programm").color(c.schwach));
+                ui.label(RichText::new(format!("Stufe {im_programm}")).strong());
+                ui.end_row();
+            });
+            ui.add_space(10.0);
+
+            let laeuft = self.update_fortschritt.is_some();
+            if let Some(a) = self.update_fortschritt {
+                ui.add(egui::ProgressBar::new(a).show_percentage().fill(c.akzent));
+                ui.label(RichText::new("Nicht trennen, solange das Update läuft.").color(c.warnung));
+            } else if let Some((p, d)) = self.update_datei.clone() {
+                // Eigene Datei gewählt
+                ui.horizontal(|ui| {
+                    ui.label(format!("Datei: {}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
+                    if ui.small_button("Eingebaute nehmen").clicked() {
+                        self.update_datei = None;
+                    }
+                });
+                ui.add_space(6.0);
+                if knopf_haupt(ui, &format!("{}  Update einspielen", icon::DOWNLOAD_SIMPLE)).clicked() {
+                    self.update_fortschritt = Some(0.0);
+                    let _ = self.tx.send(Auftrag::Update(d));
                 }
-                None => {
-                    ui.spinner();
+            } else {
+                match installiert.as_deref().map(|s| crate::paket::stufe_vergleich(s, im_programm)) {
+                    Some(std::cmp::Ordering::Equal) => {
+                        ui.label(RichText::new(format!("{}  Aktuell", icon::CHECK_CIRCLE)).color(c.akzent).size(16.0));
+                    }
+                    // Controller neuer als das Programm: kein Knopf, sonst würde man versehentlich zurückstufen
+                    Some(std::cmp::Ordering::Greater) => {
+                        ui.label(RichText::new(format!("{}  Neuer als im Programm", icon::CHECK_CIRCLE)).color(c.akzent).size(16.0));
+                    }
+                    Some(std::cmp::Ordering::Less) => {
+                        if knopf_haupt(ui, &format!("{}  Auf Stufe {im_programm} aktualisieren", icon::DOWNLOAD_SIMPLE)).clicked() {
+                            self.update_fortschritt = Some(0.0);
+                            let _ = self.tx.send(Auftrag::Update(crate::paket::UPDATE.to_vec()));
+                        }
+                    }
+                    None => {}
                 }
             }
-        });
-        ui.add_space(12.0);
-        karte(ui, |ui| {
-            titel(ui, "Update einspielen");
-            hinweis(ui, "Datei db_update_data.bin aus einem Firmware-Paket. Über USB dauert es etwa 15 s, über Bluetooth 1 bis 2 min.");
-            ui.add_space(6.0);
-            let laeuft = self.update_fortschritt.is_some();
+            ui.add_space(8.0);
             ui.add_enabled_ui(!laeuft, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button(format!("{}  Datei wählen", icon::FLOPPY_DISK)).clicked() {
+                    if ui.small_button("Andere Datei …").on_hover_text("db_update_data.bin, z. B. selbst gebaut").clicked() {
                         if let Some(p) = rfd::FileDialog::new().add_filter("Firmware-Update", &["bin"]).pick_file() {
                             match std::fs::read(&p) {
                                 Ok(d) if !d.is_empty() => self.update_datei = Some((p, d)),
@@ -1146,27 +1309,12 @@ impl App {
                             }
                         }
                     }
-                    if let Some((p, d)) = &self.update_datei {
-                        ui.label(format!(
-                            "{}  ({} KB)",
-                            p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-                            d.len() / 1024
-                        ));
-                    }
+                    hinweis(ui, "Über USB etwa 15 s, über Bluetooth 1 bis 2 min.");
                 });
             });
-            if let Some(a) = self.update_fortschritt {
-                ui.add_space(6.0);
-                ui.add(egui::ProgressBar::new(a).show_percentage().fill(c.akzent));
-                ui.label(RichText::new("Nicht trennen, solange das Update läuft.").color(c.warnung));
-            } else if let Some((_, d)) = &self.update_datei {
-                ui.add_space(6.0);
-                if knopf_haupt(ui, "Update starten").clicked() {
-                    self.update_fortschritt = Some(0.0);
-                    let _ = self.tx.send(Auftrag::Update(d.clone()));
-                }
-            }
         });
+        ui.add_space(8.0);
+        hinweis(ui, "Controller noch mit Werks-Firmware? Dann zuerst die Seite „Installieren“.");
     }
 
     fn diagnose_seite(&mut self, ui: &mut egui::Ui) {

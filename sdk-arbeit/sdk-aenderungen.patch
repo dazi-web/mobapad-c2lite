@@ -2326,7 +2326,7 @@ index ffdc48e..cbbb591 100644
      real_size = sdp_create_diy_device_ID_service(sdp_make_pnp_service_data, sizeof(sdp_make_pnp_service_data));
      printf("dy_device_id_service(%d):", real_size);
 diff --git a/apps/hid/examples/keyboard/app_keyboard.c b/apps/hid/examples/keyboard/app_keyboard.c
-index 9359003..672a60d 100644
+index 9359003..cd6b0b1 100644
 --- a/apps/hid/examples/keyboard/app_keyboard.c
 +++ b/apps/hid/examples/keyboard/app_keyboard.c
 @@ -44,16 +44,25 @@
@@ -2359,8 +2359,15 @@ index 9359003..672a60d 100644
  static void hidkey_app_select_btmode(u8 mode);
  void hidkey_power_event_to_user(u8 event);
  //----------------------------------
-+/* C2 Lite: dasselbe Gamepad wie über USB (apps/common/device/usb/device/hid.c), hier mit Report-ID 1 für BLE:
-+ * 20 Tasten + 4 Bit Füllung, Hat (4 Bit) + 4 Bit Füllung, X/Y/Z/Rz je 16 Bit (0..1023). */
++/* C2 Lite, PC-Modus über BLE: Berichtsbeschreibung des Xbox Wireless Controller (Modell 1708, One S, Firmware 4.x).
++ * Dazu meldet die Geräteinformation 045E:02FD (c2_xbox_ble_pnp). Linux bindet damit hid-microsoft, das Rumble über
++ * Ausgabebericht 3 schickt (MS_QUIRK_FF, auch auf Kerneln < 6.5); SDL/Steam lesen das Xbox-Bluetooth-Format.
++ * Bericht 1 (16 Byte): X Y Z Rz (je u16, Mitte 0x8000) | Bremse, Gas (je 10 Bit + 6 Füllung) | Hat 1..8 (0 = keine)
++ *   + 4 Füllung | 15 Tasten + 1 Füllung | AC Back + 7 Füllung.  Bericht 2: AC Home.  Bericht 4: Akku (1 Byte).
++ * Ausgabe 3 (8 Byte): Freigabe-Bits | Stärke 0..100: Trigger L, Trigger R, stark/links, schwach/rechts | Dauer (10 ms)
++ *   | Verzögerung (10 ms) | Wiederholungen.
++ * Bytes aus ESP32-BLE-CompositeHID, XboxDescriptors.h (XboxOneS_1708_HIDDescriptor), MIT-Lizenz,
++ * Copyright (c) 2021 lemmingDev und Mitwirkende, https://github.com/Mystfit/ESP32-BLE-CompositeHID */
  static const u8 hidkey_report_map[] = {
 -    0x05, 0x0C,        // Usage Page (Consumer)
 -    0x09, 0x01,        // Usage (Consumer Control)
@@ -2381,34 +2388,27 @@ index 9359003..672a60d 100644
 -    0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
 -    0xC0,              // End Collection
 -    // 35 bytes
-+    0x05, 0x01,             // Usage Page (Generic Desktop)
-+    0x09, 0x05,             // Usage (Game Pad)
-+    0xA1, 0x01,             // Collection (Application)
-+    0x85, 0x01,             //   Report ID (1)
-+    0x05, 0x09,             //   Usage Page (Button)
-+    0x19, 0x01, 0x29, 0x14, //   Usage Minimum 1, Maximum 20
-+    0x15, 0x00, 0x25, 0x01, //   Logical 0..1
-+    0x75, 0x01, 0x95, 0x14, //   Report Size 1, Count 20
-+    0x81, 0x02,             //   Input (Data, Var, Abs)
-+    0x75, 0x01, 0x95, 0x04, //   4 Bit Füllung
-+    0x81, 0x03,             //   Input (Const)
-+    0x05, 0x01,             //   Usage Page (Generic Desktop)
-+    0x09, 0x39,             //   Usage (Hat Switch)
-+    0x15, 0x00, 0x25, 0x07, //   Logical 0..7
-+    0x35, 0x00, 0x46, 0x3B, 0x01, // Physical 0..315
-+    0x65, 0x14,             //   Unit (Grad)
-+    0x75, 0x04, 0x95, 0x01, //   Report Size 4, Count 1
-+    0x81, 0x42,             //   Input (Data, Var, Abs, Null State)
-+    0x65, 0x00,             //   Unit (keine)
-+    0x75, 0x04, 0x95, 0x01, //   4 Bit Füllung
-+    0x81, 0x03,             //   Input (Const)
-+    0x09, 0x30, 0x09, 0x31, //   Usage X, Y   (linker Stick)
-+    0x09, 0x32, 0x09, 0x35, //   Usage Z, Rz  (rechter Stick)
-+    0x15, 0x00, 0x26, 0xFF, 0x03, // Logical 0..1023
-+    0x35, 0x00, 0x46, 0xFF, 0x03, // Physical 0..1023
-+    0x75, 0x10, 0x95, 0x04, //   Report Size 16, Count 4
-+    0x81, 0x02,             //   Input (Data, Var, Abs)
-+    0xC0,                   // End Collection
++    0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xA1, 0x00, 0x09, 0x30, 0x09, 0x31,
++    0x15, 0x00, 0x27, 0xFF, 0xFF, 0x00, 0x00, 0x95, 0x02, 0x75, 0x10, 0x81, 0x02, 0xC0, 0x09, 0x01,
++    0xA1, 0x00, 0x09, 0x32, 0x09, 0x35, 0x15, 0x00, 0x27, 0xFF, 0xFF, 0x00, 0x00, 0x95, 0x02, 0x75,
++    0x10, 0x81, 0x02, 0xC0, 0x05, 0x02, 0x09, 0xC5, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x95, 0x01, 0x75,
++    0x0A, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00, 0x75, 0x06, 0x95, 0x01, 0x81, 0x03, 0x05, 0x02, 0x09,
++    0xC4, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x95, 0x01, 0x75, 0x0A, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00,
++    0x75, 0x06, 0x95, 0x01, 0x81, 0x03, 0x05, 0x01, 0x09, 0x39, 0x15, 0x01, 0x25, 0x08, 0x35, 0x00,
++    0x46, 0x3B, 0x01, 0x66, 0x14, 0x00, 0x75, 0x04, 0x95, 0x01, 0x81, 0x42, 0x75, 0x04, 0x95, 0x01,
++    0x15, 0x00, 0x25, 0x00, 0x35, 0x00, 0x45, 0x00, 0x65, 0x00, 0x81, 0x03, 0x05, 0x09, 0x19, 0x01,
++    0x29, 0x0F, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x0F, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00,
++    0x75, 0x01, 0x95, 0x01, 0x81, 0x03, 0x05, 0x0C, 0x0A, 0x24, 0x02, 0x15, 0x00, 0x25, 0x01, 0x95,
++    0x01, 0x75, 0x01, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00, 0x75, 0x07, 0x95, 0x01, 0x81, 0x03, 0x05,
++    0x0C, 0x09, 0x01, 0x85, 0x02, 0xA1, 0x01, 0x05, 0x0C, 0x0A, 0x23, 0x02, 0x15, 0x00, 0x25, 0x01,
++    0x95, 0x01, 0x75, 0x01, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00, 0x75, 0x07, 0x95, 0x01, 0x81, 0x03,
++    0xC0, 0x05, 0x0F, 0x09, 0x21, 0x85, 0x03, 0xA1, 0x02, 0x09, 0x97, 0x15, 0x00, 0x25, 0x01, 0x75,
++    0x04, 0x95, 0x01, 0x91, 0x02, 0x15, 0x00, 0x25, 0x00, 0x75, 0x04, 0x95, 0x01, 0x91, 0x03, 0x09,
++    0x70, 0x15, 0x00, 0x25, 0x64, 0x75, 0x08, 0x95, 0x04, 0x91, 0x02, 0x09, 0x50, 0x66, 0x01, 0x10,
++    0x55, 0x0E, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x91, 0x02, 0x09, 0xA7, 0x15,
++    0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x91, 0x02, 0x65, 0x00, 0x55, 0x00, 0x09, 0x7C,
++    0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x91, 0x02, 0xC0, 0x05, 0x06, 0x09, 0x20,
++    0x85, 0x04, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x81, 0x02, 0xC0,
  };
  
  // consumer key
@@ -2557,8 +2557,21 @@ index 9359003..672a60d 100644
      log_info("=======================================");
      log_info("-------------HID DEMO-----------------");
      log_info("=======================================");
-@@ -586,6 +690,13 @@ static void hidkey_app_start()
+@@ -584,8 +688,26 @@ static void hidkey_app_start()
+     btstack_ble_start_before_init(&hidkey_ble_config, 0);
+     /* le_hogp_set_reconnect_adv_cfg(ADV_IND, 5000); */
      le_hogp_set_reconnect_adv_cfg(ADV_DIRECT_IND_LOW, 5000);
++#ifdef CONFIG_BOARD_C2LITE
++    {
++        /* Geräteinformation (PnP-ID): USB-IF, Microsoft 045E, Xbox Wireless Controller 1708 02FD, Version 0x0408 */
++        static const u8 c2_xbox_ble_pnp[] = {0x02, 0x5E, 0x04, 0xFD, 0x02, 0x08, 0x04};
++        extern void le_hogp_set_PNP_info(const u8 *info);
++        extern void le_hogp_set_output_callback(void *cb);
++        extern void c2_xbox_ble_ausgabe(u8 *buf, u16 len);
++        le_hogp_set_PNP_info(c2_xbox_ble_pnp);
++        le_hogp_set_output_callback(c2_xbox_ble_ausgabe); /* Ausgabebericht 3 = Rumble (c2_xinput.c) */
++    }
++#endif
  #endif
  
 +#if defined(CONFIG_BOARD_C2LITE) && defined(C2_BT_DIAGNOSE)
@@ -2571,7 +2584,7 @@ index 9359003..672a60d 100644
      btstack_init();
  
  #else
-@@ -715,6 +826,9 @@ static int hidkey_bt_connction_status_event_handler(struct bt_event *bt)
+@@ -715,6 +837,9 @@ static int hidkey_bt_connction_status_event_handler(struct bt_event *bt)
              btstack_ble_start_after_init(0);
  #endif
          } else {
@@ -2581,7 +2594,7 @@ index 9359003..672a60d 100644
  #if TCFG_USER_EDR_ENABLE
              btstack_edr_start_after_init(0);
  #endif
-@@ -911,15 +1025,26 @@ static void hidkey_app_select_btmode(u8 mode)
+@@ -911,15 +1036,26 @@ static void hidkey_app_select_btmode(u8 mode)
          }
  
  #if TCFG_USER_BLE_ENABLE
@@ -3005,6 +3018,24 @@ index cc3e83e..f332af5 100644
  int ble_hid_transfer_channel_send(u8 *packet, u16 size)
  {
      /* log_info("transfer_tx(%d):", size); */
+diff --git a/apps/hid/modules/bt/ble_hogp_profile.h b/apps/hid/modules/bt/ble_hogp_profile.h
+index 49d9deb..be5c0b2 100644
+--- a/apps/hid/modules/bt/ble_hogp_profile.h
++++ b/apps/hid/modules/bt/ble_hogp_profile.h
+@@ -174,8 +174,13 @@ static const uint8_t hogp_profile_data[] = {
+     // 0x002f VALUE 2a4d READ | WRITE | WRITE_WITHOUT_RESPONSE | DYNAMIC
+     0x08, 0x00, 0x0e, 0x01, 0x2f, 0x00, 0x4d, 0x2a,
+ 
++#ifdef CONFIG_BOARD_C2LITE
++    /* 0x0030 REPORT_REFERENCE,03,02: Ausgabebericht 3 = Rumble des Xbox Wireless Controller (hid-microsoft) */
++    0x0a, 0x00, 0x02, 0x00, 0x30, 0x00, 0x08, 0x29, 0x03, 0x02,
++#else
+     /* 0x0030 REPORT_REFERENCE,01,02 */
+     0x0a, 0x00, 0x02, 0x00, 0x30, 0x00, 0x08, 0x29, 0x01, 0x02,
++#endif
+ 
+     /* CHARACTERISTIC,  2a4d, READ | WRITE | NOTIFY | DYNAMIC, */
+     // 0x0031 CHARACTERISTIC 2a4d READ | WRITE | NOTIFY | DYNAMIC
 diff --git a/apps/hid/modules/bt/edr_hid_user.c b/apps/hid/modules/bt/edr_hid_user.c
 index 3d341cc..e39e70c 100644
 --- a/apps/hid/modules/bt/edr_hid_user.c
@@ -4283,10 +4314,10 @@ index 0000000..bad24a6
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_eingaben.c b/apps/hid/modules/c2lite/c2_eingaben.c
 new file mode 100644
-index 0000000..fed2dca
+index 0000000..689523a
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_eingaben.c
-@@ -0,0 +1,904 @@
+@@ -0,0 +1,897 @@
 +/* C2 Lite: Eingaben lesen, als HID-Gamepad über USB senden und über das USB-Protokoll (c2_log) melden.
 + * Keine LED, kein Motor, kein Laden (kommt in späteren Stufen).
 + * Pin-Karte und Abfrage-Ablauf aus der Werks-Firmware, am Gerät bestätigt:
@@ -4541,7 +4572,7 @@ index 0000000..fed2dca
 +static u32 alt_wert[N_ANALOG];
 +static int alt_usb = -1;
 +static u32 runde;
-+static u8 report[12];         /* BLE-Gamepad-Report */
++static u8 report[16];         /* BLE-Gamepad-Report: Xbox Wireless Controller 1708, Bericht 1 (c2_xinput.c) */
 +static u8 xi[20], alt_xi[20]; /* USB im PC-Modus: XInput (c2_xinput.c) */
 +static u8 report_gesendet;
 +static u32 usb_host_runde; /* Runde, in der zuletzt ein PC am USB aktiv war (Rahmenzähler lief) */
@@ -4567,7 +4598,7 @@ index 0000000..fed2dca
 +int ble_hid_is_connected(void);
 +int ble_hid_data_send(u8 report_id, u8 *data, u16 len);
 +int c2_ble_report_abonniert(void);
-+static u8 ble_alt[12];
++static u8 ble_alt[16];
 +static int ble_verbunden, ble_abonniert;
 +
 +static void eingang(u32 pin, int pull_up, int pull_down)
@@ -5057,16 +5088,9 @@ index 0000000..fed2dca
 +    memcpy(aus_achse, status_achse, sizeof(aus_achse));
 +    u64 aus = c2_belegung_takt(r, aus_achse);
 +
-+    /* Report: Tasten 1..20, Hat, 4 Achsen */
-+    u32 tasten = (u32)(aus & 0xFFFFF);
-+    report[0] = tasten;
-+    report[1] = tasten >> 8;
-+    report[2] = (tasten >> 16) & 0x0F;
-+    report[3] = hat(aus);
-+    for (int i = 0; i < N_STICK; i++) {
-+        report[4 + 2 * i] = aus_achse[i];
-+        report[5 + 2 * i] = aus_achse[i] >> 8;
-+    }
++    /* Bluetooth-Bericht im Format des Xbox Wireless Controller (Rumble über hid-microsoft, Tasten wie SDL erwartet) */
++    extern void c2_xbox_ble_bericht(u64 r, const u16 a[4], u8 *b, u8 hat);
++    c2_xbox_ble_bericht(aus, aus_achse, report, hat(aus));
 +    /* Senden bei Änderung, sonst alle 100 ms (falls ein Report verloren ging) */
 +    struct c2_switch_lage sl = {.rollen = aus, .akku = c2_akku_prozent(), .laedt = c2_akku_laedt()};
 +    memcpy(sl.achsen, aus_achse, sizeof(sl.achsen));
@@ -5078,7 +5102,7 @@ index 0000000..fed2dca
 +        extern void c2_xinput_bericht(u64 r, const u16 a[4], u8 *b);
 +        extern void c2_xinput_takt(int host);
 +        c2_xinput_bericht(aus, aus_achse, xi);
-+        c2_xinput_takt(usb_host);
++        c2_xinput_takt(usb_host || ble_abonniert); /* Rumble auch über Bluetooth (Ausgabebericht 3), Stand der Vorrunde */
 +    }
 +    if (c2_pro2_an()) {
 +        /* Pro Controller 2 per BLE an der Switch 2 (c2_pro2.c) */
@@ -5193,7 +5217,7 @@ index 0000000..fed2dca
 +}
 diff --git a/apps/hid/modules/c2lite/c2_log.c b/apps/hid/modules/c2lite/c2_log.c
 new file mode 100644
-index 0000000..df7bd31
+index 0000000..715c081
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_log.c
 @@ -0,0 +1,690 @@
@@ -5201,7 +5225,7 @@ index 0000000..df7bd31
 +#include "system/includes.h"
 +#include "c2_log.h"
 +#ifndef C2_STAND
-+#define C2_STAND "11c"
++#define C2_STAND "13a"
 +#endif
 +#include "asm/gpio.h"
 +
@@ -8051,10 +8075,10 @@ index 0000000..7154169
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_xinput.c b/apps/hid/modules/c2lite/c2_xinput.c
 new file mode 100644
-index 0000000..c74f4fb
+index 0000000..89390c6
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_xinput.c
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,165 @@
 +/* C2 Lite, PC-Modus über USB: XInput (Xbox-360-Protokoll) wie die Werks-Firmware (Schnittstelle ff/5d/01, Kennung
 + * 2345:e06e, MS-OS-Deskriptor „XUSB10“, Gegenprobe Werks-FW 0x1E26E7B/0x1E2703B). Damit binden Windows (xusb22) und
 + * Linux (xpad, Hersteller 2345) ihren Xbox-Treiber, und Spiele können die Motoren ansteuern.
@@ -8111,10 +8135,50 @@ index 0000000..c74f4fb
 +    }
 +}
 +
-+/* Rumble: vom USB-Interrupt nur gemerkt, die Motoren setzt c2_xinput_takt in der Abfragerunde */
++/* Bluetooth (PC-Modus): Bericht 1 des Xbox Wireless Controller 1708 (Berichtsbeschreibung in app_keyboard.c).
++ * 16 Byte: X Y Z Rz (u16, Mitte 0x8000, Y unten groß) | Bremse | Gas (10 Bit) | Hat 1..8, 0 = keine | Tasten (16 Bit) | 0.
++ * Tastenbits wie SDL (Xbox über Bluetooth): A 0, B 1, X 3, Y 4, LB 6, RB 7, Menü 11, Xbox 12, LS 13, RS 14;
++ * positionsgleich wie oben (unten = A, rechts = B, links = X, oben = Y). View kommt beim Modell 1708 als „AC Back“ in
++ * Byte 15 (nicht Bit 10): SDL-Zuordnung 045E:02FD „back:b15“ = KEY_BACK, am 31.10. am Gerät geprüft. */
++static const struct {
++    u8 rolle, bit;
++} XBOX_BLE[] = {
++    {C2_ROLLE_B, 0},  {C2_ROLLE_A, 1},     {C2_ROLLE_Y, 3},     {C2_ROLLE_X, 4},     {C2_ROLLE_L, 6},  {C2_ROLLE_R, 7},
++    {C2_ROLLE_PLUS, 11}, {C2_ROLLE_HOME, 12}, {C2_ROLLE_L3, 13}, {C2_ROLLE_R3, 14},
++};
++
++void c2_xbox_ble_bericht(u64 r, const u16 a[4], u8 *b, u8 hat)
++{
++    memset(b, 0, 16);
++    for (int i = 0; i < 4; i++) {
++        u32 v = (u32)a[i] * 64 + 32; /* 0..1023 -> 0..65535, Mitte 512 -> 0x8020 ≈ 0x8000 */
++        if (v > 0xFFFF) {
++            v = 0xFFFF;
++        }
++        b[2 * i] = v, b[2 * i + 1] = v >> 8;
++    }
++    u16 zl = (r & BIT64(C2_ROLLE_ZL)) ? 1023 : 0, zr = (r & BIT64(C2_ROLLE_ZR)) ? 1023 : 0; /* digital */
++    b[8] = zl, b[9] = zl >> 8;
++    b[10] = zr, b[11] = zr >> 8;
++    b[12] = hat > 7 ? 0 : hat + 1; /* c2_eingaben: 0 = hoch .. 7 = links-hoch, 8 = keine */
++    u16 t = 0;
++    for (int i = 0; i < (int)ARRAY_SIZE(XBOX_BLE); i++) {
++        if (r & BIT64(XBOX_BLE[i].rolle)) {
++            t |= 1 << XBOX_BLE[i].bit;
++        }
++    }
++    b[13] = t, b[14] = t >> 8;
++    b[15] = (r & BIT64(C2_ROLLE_MINUS)) ? 0x01 : 0; /* View = AC Back */
++}
++
++/* Rumble: vom USB-Interrupt bzw. vom Bluetooth-Schreibrückruf nur gemerkt, die Motoren setzt c2_xinput_takt in der
++ * Abfragerunde */
 +static volatile u8 wunsch[2], neu;
 +static u8 aktiv[2];
 +static u32 runde;
++/* Bluetooth-Rumble endet spätestens zu dieser Runde (Dauer × Wiederholungen aus dem Bericht, höchstens 60 s) */
++static volatile u32 ble_bis;
++#define TAKT_MS_X 10
 +
 +void c2_xinput_empfang(const u8 *buf, u32 len)
 +{
@@ -8122,6 +8186,30 @@ index 0000000..c74f4fb
 +        wunsch[0] = buf[3], wunsch[1] = buf[4];
 +        neu = 1;
 +    }
++}
++
++/* Ausgabebericht 3 über Bluetooth (hid-microsoft, Windows): Freigabe | L-Trigger | R-Trigger | stark (links) |
++ * schwach (rechts) | Dauer (10 ms) | Verzögerung | Wiederholungen. Der GATT-Wert kommt ohne Berichtsnummer; falls ein
++ * Host sie doch mitschickt (9 Byte, erstes 3), wird sie übersprungen. Freigabe Bit 1 = stark, Bit 0 = schwach. */
++void c2_xbox_ble_ausgabe(u8 *buf, u16 len)
++{
++    if (len == 9 && buf[0] == 0x03) {
++        buf++, len--;
++    }
++    if (len < 5) {
++        return;
++    }
++    u8 frei = buf[0];
++    u8 stark = (frei & 0x02) ? buf[3] : 0, schwach = (frei & 0x01) ? buf[4] : 0;
++    wunsch[0] = (u32)(stark > 100 ? 100 : stark) * 255 / 100;
++    wunsch[1] = (u32)(schwach > 100 ? 100 : schwach) * 255 / 100;
++    /* Linux schickt Dauer 255 und 255 Wiederholungen (≈ 650 s) und zum Stoppen Stärke 0; Windows echte Dauern */
++    u32 ms = len >= 8 ? ((u32)buf[5] * 10) * ((u32)buf[7] + 1) + (u32)buf[6] * 10 : 1000;
++    if (ms > 60000) {
++        ms = 60000;
++    }
++    ble_bis = runde + ms / TAKT_MS_X + 1;
++    neu = 1;
 +}
 +
 +/* Anlaufschwelle wie an der Switch: kleine Werte wären sonst nicht spürbar; Stärke-Einstellung skaliert */
@@ -8135,12 +8223,14 @@ index 0000000..c74f4fb
 +    return (ANLAUF + p * (100 - ANLAUF) / 100) * c2_vibration_staerke() / 100;
 +}
 +
-+/* Jede Abfragerunde im PC-Modus: XInput hält Rumble, bis der Host etwas anderes schickt; ohne Host aus */
++/* Jede Abfragerunde im PC-Modus: XInput hält Rumble, bis der Host etwas anderes schickt; ohne Host aus.
++ * host: USB-Host aktiv oder Bluetooth verbunden und abonniert. Bluetooth-Rumble endet zusätzlich nach seiner Dauer. */
 +void c2_xinput_takt(int host)
 +{
 +    runde++;
-+    if (!host) {
++    if (!host || (ble_bis && (s32)(runde - ble_bis) >= 0)) {
 +        wunsch[0] = wunsch[1] = 0;
++        ble_bis = 0;
 +    }
 +    u8 l = staerke(wunsch[0]), r = staerke(wunsch[1]);
 +    if (neu || l != aktiv[0] || r != aktiv[1] || ((l || r) && runde % 10 == 0)) {

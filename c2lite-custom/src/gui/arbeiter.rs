@@ -26,6 +26,8 @@ pub enum Zweck {
     Still,
     Backup,
     Wiederherstellen,
+    /// „pro2 status“ (ab Stufe 11), still: alte Firmware kennt den Befehl nicht
+    Pro2,
 }
 
 pub enum Auftrag {
@@ -62,9 +64,14 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
             ctx.request_repaint();
         };
         let mut kanal: Option<Box<dyn Kanal>> = None;
+        let mut kanal_weg = Weg::Usb;
         let mut live = false;
         let mut fehler_in_folge = 0;
         let mut letzter_status = Instant::now();
+        let mut letzte_pruefung = Instant::now();
+        // USB-Controller weg (Kabel gezogen, Download-Modus, Schieber auf Switch)? Dann Kanal verwerfen und melden, statt
+        // alte Werte weiter als „verbunden“ zu zeigen
+        let usb_weg = |kanal: &Option<Box<dyn Kanal>>, weg: Weg| kanal.is_some() && weg == Weg::Usb && geraet::finden().is_none();
         loop {
             let warten = if live && kanal.is_some() { Duration::from_millis(15) } else { Duration::from_millis(250) };
             match rx.recv_timeout(warten) {
@@ -75,6 +82,7 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                         Ok(k) => {
                             let name = k.name();
                             kanal = Some(k);
+                            kanal_weg = weg;
                             fehler_in_folge = 0;
                             senden(Meldung::Verbunden(weg, name));
                         }
@@ -102,7 +110,12 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                             }
                         }
                     }
+                    let fehlgeschlagen = ergebnis.is_err();
                     senden(Meldung::Antwort(zweck, ergebnis.map(|_| alle)));
+                    if fehlgeschlagen && usb_weg(&kanal, kanal_weg) {
+                        kanal = None;
+                        senden(Meldung::Getrennt(Some("Controller nicht mehr am USB".into())));
+                    }
                 }
                 Ok(Auftrag::Update(daten)) => {
                     let Some(k) = kanal.as_mut() else {
@@ -138,7 +151,15 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     });
                     senden(Meldung::WeckenFertig(r));
                 }
-                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Timeout) => {
+                    if letzte_pruefung.elapsed() >= Duration::from_secs(2) {
+                        letzte_pruefung = Instant::now();
+                        if usb_weg(&kanal, kanal_weg) {
+                            kanal = None;
+                            senden(Meldung::Getrennt(Some("Controller nicht mehr am USB".into())));
+                        }
+                    }
+                }
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             if live && letzter_status.elapsed() >= Duration::from_millis(30) {

@@ -142,7 +142,11 @@ pub fn werk_abbild(sicherung: &[u8]) -> Result<Vec<u8>> {
         return Err(Error::other("Die Sicherung muss genau 1 MB groß sein"));
     }
     let Some(&bruecke) = WERK_BAENKE.iter().find(|&&b| ist_bruecke(sicherung, b)) else {
-        return Err(Error::other("Das ist keine Sicherung aus „Installieren“ (keine Brücke gefunden)"));
+        // USB-Weg (Home + Y + X): keine Brücke, die Sicherung ist der unveränderte Werkszustand und geht 1:1 zurück
+        if WERK_BAENKE.iter().any(|&b| bootinfo_gueltig(sicherung, b)) {
+            return Ok(sicherung.to_vec());
+        }
+        return Err(Error::other("Das ist keine Sicherung aus „Installieren“ (weder Brücke noch gültige Werks-Firmware)"));
     };
     let werk = WERK_BAENKE.into_iter().find(|&b| b != bruecke).unwrap();
     if !bootinfo_gueltig(sicherung, werk) {

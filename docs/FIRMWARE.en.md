@@ -3,7 +3,7 @@
 A small easter egg: on the device it shows up as "C2 Lite dazi edition" (USB) or "C2 Lite dazi" (Bluetooth).
 
 Free replacement firmware for the Mobapad C2 Lite (Jieli AC635N/AC695N, BR23 family), built from the open Jieli
-SDK. Status 2026-10-30: stage 11c. Prebuilt firmware: `release/`. German version of this document:
+SDK. Status 2026-10-31: stage 13a. Prebuilt firmware: `release/`. German version of this document:
 `FIRMWARE.md`.
 
 > **At your own risk.** Only use on hardware you own. Always back up the whole flash before the first write (see
@@ -18,12 +18,12 @@ Command names of the firmware and of `c2lite-custom` are German (e.g. `licht` = 
 |---|---|
 | All buttons, d-pad, ZL/ZR, both sticks, back paddles, M, light key | ✓ |
 | PC over USB | ✓ as Xbox controller (XInput) like the factory firmware, `2345:e06e` "dazi / C2 Lite dazi edition"; Linux `xpad`, Windows built-in driver, no kernel quirk needed |
-| PC over Bluetooth LE | ✓ "C2 Lite dazi", key size 7..16 (the factory "key size 1" bug is gone), works alongside USB |
+| PC over Bluetooth LE | ✓ "C2 Lite dazi" as an **Xbox Wireless Controller** (045E:02FD, like the Xbox One S), with rumble; key size 7..16 (the factory "key size 1" bug is gone), works alongside USB. Pair again once after updating to stage 13 |
 | Switch over USB | ✓ as Pro Controller (057E:2009), player LEDs and HD rumble from the console |
 | Switch 2 over Bluetooth | ✓ as a **Pro Controller 2** (Bluetooth LE): pair once, reconnects by itself, powers off when the console sleeps ([`PRO-CONTROLLER-2.en.md`](PRO-CONTROLLER-2.en.md)) |
 | Wake the Switch 2 | ✓ Home or power-on wakes the console with the controller's **own** address (no Joy-Con identity) |
 | Mapping, turbo, macros | ✓ like the original: back 1/2 and M send a button, several buttons or a macro (up to 80 steps); turbo per button |
-| Rumble | ✓ from PC games (USB, XInput), on the Switch (HD rumble) and by command; not over Bluetooth LE |
+| Rumble | ✓ from PC games over USB (XInput) and Bluetooth LE (from stage 13, Linux: hid-microsoft), on the Switch (HD rumble) and by command |
 | Lights | ✓ player LEDs and RGB logo show the state, strip and sides with effects |
 | Battery level and charging | ✓ from the cell voltage, also via the Bluetooth battery service |
 | Power on/off | ✓ slider to off without USB = off; on battery off after 10 min without input; wake by slider, Home or USB |
@@ -70,7 +70,7 @@ firmware using only the computer's Bluetooth and a USB cable (Linux, see README)
 
 ## Building
 
-Third-party code is not in the repository but locally under `sdk-arbeit/` (sources listed in `README.md`):
+Third-party code is not in the repository but locally under `sdk-arbeit/`:
 
 ```
 git clone https://github.com/Jieli-Tech/fw-AC63_BT_SDK sdk-arbeit/jieli-sdk/sdk
@@ -106,8 +106,10 @@ the old firmware keeps running. Important: the app needs the task `dw_update` in
 
 The normal way is the "Installieren" page of `c2lite-custom` (see README). This section describes the way via the
 ROM download mode: for recovery after a brick (the ESP32-C6 from `c6-rettung/` sends the USB key) or when C2 Lite
-Custom is already running (hold Home + Minus for 5 s, or `c2lite-custom download-modus`). The controller then shows
-up as "BR23 UBOOT1.00" (USB 4c4a:2342). Access needs root or the udev rule `werkzeuge/99-jieli-br23.rules`.
+Custom is already running (hold Home + Minus for 5 s, or `c2lite-custom download-modus`). With the **stock
+firmware** it also works without the Bluetooth bridge and without an ESP32: Home + Y + X while USB traffic is
+running, see [`WERKS-DOWNLOAD.en.md`](WERKS-DOWNLOAD.en.md). The controller then shows up as "BR23 UBOOT1.00"
+(USB 4c4a:2342). Access needs root or the udev rule `werkzeuge/99-jieli-br23.rules`.
 
 1. **Back up:** `c2lite-custom download lesen backup.bin` (whole flash, 1 MB). Keep it, it is your way back.
 2. **Build the image** (files only): `python3 werkzeuge/soll_bauen.py --dualbank backup.bin release/jl_isd.bin target.bin`.

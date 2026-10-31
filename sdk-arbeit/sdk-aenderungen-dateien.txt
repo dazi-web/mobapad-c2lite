@@ -20,6 +20,7 @@ apps/hid/include/app_config.h
 apps/hid/modules/bt/app_comm_ble.c
 apps/hid/modules/bt/app_comm_edr.c
 apps/hid/modules/bt/ble_hogp.c
+apps/hid/modules/bt/ble_hogp_profile.h
 apps/hid/modules/bt/edr_hid_user.c
 apps/hid/modules/c2lite/c2_aes.h
 apps/hid/modules/c2lite/c2_anzeige.c

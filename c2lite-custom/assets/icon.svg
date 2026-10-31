@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Programmsymbol c2lite-custom: Controller in Akzentgrün auf dunklem Grund (Farben aus gui/stil.rs) -->
+  <rect x="19" y="19" width="474" height="474" rx="108" fill="#16191c" stroke="#2a3a33" stroke-width="6"/>
+  <path fill="#3cc892" d="M168 166 H344 C390 166 418 194 428 236 L452 340 C462 384 418 410 384 378 L330 322 H182 L128 378 C94 410 50 384 60 340 L84 236 C94 194 122 166 168 166 Z"/>
+  <g fill="#16191c">
+    <rect x="148" y="232" width="72" height="24" rx="6"/>
+    <rect x="172" y="208" width="24" height="72" rx="6"/>
+    <circle cx="336" cy="222" r="15"/>
+    <circle cx="368" cy="254" r="15"/>
+    <circle cx="304" cy="254" r="15"/>
+    <circle cx="336" cy="286" r="15"/>
+  </g>
+</svg>

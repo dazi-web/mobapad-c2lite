@@ -8,7 +8,7 @@
 //! Rückweg („werk-zurueck-kern“): eigene Firmware per Befehl in den Download-Modus, aktuellen Speicher sichern, Werks-Abbild aus
 //! der Sicherung der Installation (abbild::werk_abbild) schreiben und prüfen.
 
-use crate::{abbild, download, werk_ble};
+use crate::{abbild, download, werk_ble, werk_usb};
 use std::io::{BufRead, BufReader, Error, Result, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -64,8 +64,8 @@ fn kern_ablauf(a: &[String]) -> Result<()> {
             std::thread::sleep(Duration::from_millis(300));
         }
     }
-    zeile("HINWEIS Controller einschalten und in den Kopplungsmodus bringen (USB-Kabel bleibt ab).");
     zeile("SCHRITT Controller suchen");
+    zeile("HINWEIS Controller ohne Kabel einschalten und in den Kopplungsmodus bringen.");
     let adr = w.suchen(Duration::from_secs(180))?.ok_or_else(|| {
         Error::other("Kein Controller mit Werks-Firmware gefunden (Kopplungsmodus an? Kabel ab? In der Nähe?)")
     })?;
@@ -83,7 +83,8 @@ fn kern_ablauf(a: &[String]) -> Result<()> {
         ));
         return Ok(());
     }
-    zeile("SCHRITT Brücke übertragen (etwa 4–6 Minuten, Controller liegen lassen)");
+    zeile("SCHRITT Brücke übertragen (etwa 5 Minuten)");
+    zeile("HINWEIS Controller liegen lassen.");
     let mut zuletzt = -1.0f32;
     s.update(&bruecke, &mut |f| {
         if f - zuletzt >= 0.005 {
@@ -93,21 +94,122 @@ fn kern_ablauf(a: &[String]) -> Result<()> {
     })?;
     drop(s);
     drop(w);
-    zeile("HINWEIS Jetzt das USB-Kabel vom Rechner an den Controller stecken.");
     zeile("SCHRITT Warte auf den Download-Modus");
+    zeile("HINWEIS Jetzt das USB-Kabel anstecken.");
     let pfad = download::warten(Duration::from_secs(300))
         .ok_or_else(|| Error::other("Der Controller erscheint nicht im Download-Modus (Kabel gesteckt? Datenkabel?)"))?;
-    let mut d = download::Download::oeffnen(&pfad)?;
-    d.lader_starten(&lader)?;
+    im_download_modus(&pfad, &lader, &jl_isd, &ordner, (uid, gid), "werk-sicherung", false)
+}
+
+/// installieren-usb-kern <lader.bin> <jl_isd.bin> <sicherungsordner> <uid:gid> [probelauf]
+pub fn usb_kern(a: &[String]) -> Result<()> {
+    let r = usb_ablauf(a);
+    if let Err(e) = &r {
+        zeile(&format!("FEHLER {e}"));
+    }
+    r
+}
+
+/// USB-Weg (docs/WERKS-DOWNLOAD.md): Werks-Firmware am Kabel, Rumble-Impulse halten „USB aktiv“, der Mensch hält
+/// Home + Y + X, die Werks-Firmware springt in den ROM-Download-Modus. Ohne Bluetooth und ohne Brücke.
+fn usb_ablauf(a: &[String]) -> Result<()> {
+    if a.len() < 4 {
+        return Err(Error::other("installieren-usb-kern: Argumente fehlen"));
+    }
+    let lader = std::fs::read(&a[0])?;
+    let jl_isd = std::fs::read(&a[1])?;
+    let ordner = PathBuf::from(&a[2]);
+    let benutzer = benutzer(&a[3]);
+    let probelauf = a.get(4).map(String::as_str) == Some("probelauf");
+
+    zeile("SCHRITT Controller am USB suchen");
+    // Ohne Quirk fragt Linux den Device_Qualifier ab: Daran hängt sich die Werks-Firmware auf, und dieselbe Anfrage
+    // sperrt Home + Y + X. Der Quirk gilt nur für 2345:e06e und nur bis zum nächsten Neustart des Rechners.
+    let quirk_neu = quirk_setzen()?;
+    if let Some(pfad) = download::warten(Duration::ZERO) {
+        // Schon im Download-Modus (z. B. nach einem abgebrochenen Versuch): Inhalt unbekannt, eigener Name für die Sicherung,
+        // damit sie nie als Werks-Sicherung für den Rückweg gilt
+        zeile("SCHRITT Controller ist schon im Download-Modus");
+        return im_download_modus(&pfad, &lader, &jl_isd, &ordner, benutzer, "download-sicherung", probelauf);
+    }
+    if quirk_neu && werk_am_usb() {
+        // Schon ohne Quirk angemeldet: gilt erst nach neuem Einstecken
+        zeile("HINWEIS USB-Kabel einmal abziehen.");
+        let bis = std::time::Instant::now() + Duration::from_secs(120);
+        while werk_am_usb() {
+            if std::time::Instant::now() > bis {
+                return Err(Error::other("Das USB-Kabel steckt noch. Bitte abziehen und noch einmal starten. Nichts wurde verändert."));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    }
+    if !werk_am_usb() {
+        zeile("HINWEIS Kabel ab, Controller einschalten (Schieber auf PC, Home), dann Kabel anstecken.");
+        let bis = std::time::Instant::now() + Duration::from_secs(300);
+        while !werk_am_usb() {
+            if std::time::Instant::now() > bis {
+                return Err(Error::other("Kein Controller mit Werks-Firmware am USB gefunden (Kabel gesteckt? Datenkabel? Schieber auf PC?)"));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    }
+    // Das Eingabegerät kommt kurz nach dem USB-Gerät; nach dem Einschalten meldet sich die Werks-Firmware nach ≈ 4 s einmal
+    // um, das fängt der Wachhalter ab
+    let bis = std::time::Instant::now() + Duration::from_secs(15);
+    let ev = loop {
+        if let Some(p) = werk_usb::eingabegeraet() {
+            break p;
+        }
+        if std::time::Instant::now() > bis {
+            return Err(Error::other("Eingabegerät des Controllers nicht gefunden (Treiber xpad geladen? Schieber auf PC?)"));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    };
+    zeile("SCHRITT USB-Verkehr starten");
+    let wach = werk_usb::Wachhalter::starten(&ev).map_err(|e| Error::other(format!("Vibration an {} nicht möglich: {e}", ev.display())))?;
+    zeile("SCHRITT Warte auf den Download-Modus");
+    zeile("HINWEIS Home + Y + X halten, bis das Brummen aufhört.");
+    let pfad = download::warten(Duration::from_secs(90));
+    drop(wach);
+    let pfad = pfad.ok_or_else(|| {
+        Error::other(
+            "Kein Download-Modus nach 90 s. Kabel abziehen, Controller ohne Kabel einschalten und noch einmal versuchen \
+             (mit Kabel eingeschaltet bleibt die Werks-Firmware im Lademodus). Nichts wurde verändert.",
+        )
+    })?;
+    im_download_modus(&pfad, &lader, &jl_isd, &ordner, benutzer, "werk-sicherung", probelauf)
+}
+
+/// Gemeinsamer Teil beider Wege, sobald der Controller im ROM-Download-Modus ist: Lader starten, ganzen Speicher sichern,
+/// Abbild bauen; im Probelauf danach nur neu starten, sonst schreiben, zurücklesen, vergleichen, neu starten.
+fn im_download_modus(
+    pfad: &str,
+    lader: &[u8],
+    jl_isd: &[u8],
+    ordner: &Path,
+    (uid, gid): (u32, u32),
+    sicherung_name: &str,
+    probelauf: bool,
+) -> Result<()> {
+    let mut d = download::Download::oeffnen(pfad)?;
+    d.lader_starten(lader)?;
     zeile("SCHRITT Sicherung des ganzen Speichers lesen");
     let sicherung = d.lesen(0, download::FLASH_GROESSE, &mut |f| zeile(&format!("FORTSCHRITT {f:.3}")))?;
-    std::fs::create_dir_all(&ordner)?;
-    let datei = ordner.join(format!("werk-sicherung-{}.bin", zeitstempel()));
+    std::fs::create_dir_all(ordner)?;
+    let datei = ordner.join(format!("{sicherung_name}-{}.bin", zeitstempel()));
     std::fs::write(&datei, &sicherung)?;
-    eigentuemer(&ordner, uid, gid);
+    eigentuemer(ordner, uid, gid);
     eigentuemer(&datei, uid, gid);
-    zeile(&format!("HINWEIS Sicherung gespeichert: {}", datei.display()));
-    let soll = abbild::custom_abbild(&sicherung, &jl_isd)?;
+    zeile(&format!("SCHRITT Sicherung gespeichert: ~/c2lite-sicherung/{}", datei.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
+    let soll = abbild::custom_abbild(&sicherung, jl_isd)?;
+    if probelauf {
+        d.neustart();
+        zeile(
+            "FERTIG Probelauf erfolgreich: Download-Modus erreicht, Speicher gesichert, Abbild gebaut. Nichts wurde geschrieben; \
+             der Controller startet mit der Werks-Firmware neu.",
+        );
+        return Ok(());
+    }
     zeile("SCHRITT C2 Lite Custom schreiben");
     d.schreiben(0, &soll[..abbild::BEREICH_ENDE], &mut |f| zeile(&format!("FORTSCHRITT {f:.3}")))?;
     zeile("SCHRITT Prüfen");
@@ -146,7 +248,7 @@ fn werk_zurueck_ablauf(a: &[String]) -> Result<()> {
     zeile("SCHRITT Download-Modus starten");
     if download::warten(Duration::ZERO).is_none() {
         if crate::geraet::finden().is_none() {
-            zeile("HINWEIS Controller mit C2 Lite Custom per USB-Kabel an den Rechner stecken.");
+            zeile("HINWEIS Controller per USB-Kabel anstecken.");
         }
         let bis = std::time::Instant::now() + Duration::from_secs(300);
         let pfad = loop {
@@ -199,7 +301,7 @@ fn werk_zurueck_ablauf(a: &[String]) -> Result<()> {
     std::fs::write(&datei, &jetzt)?;
     eigentuemer(&ordner, uid, gid);
     eigentuemer(&datei, uid, gid);
-    zeile(&format!("HINWEIS Sicherung gespeichert: {}", datei.display()));
+    zeile(&format!("SCHRITT Sicherung gespeichert: ~/c2lite-sicherung/{}", datei.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
     zeile("SCHRITT Werks-Firmware schreiben");
     d.schreiben(0, &soll[..abbild::RUECKWEG_ENDE], &mut |f| zeile(&format!("FORTSCHRITT {f:.3}")))?;
     zeile("SCHRITT Prüfen");
@@ -239,6 +341,20 @@ fn eigentuemer(p: &Path, uid: u32, gid: u32) {
     }
 }
 
+/// USB-Quirk „Device_Qualifier nicht abfragen“ (i) für 2345:e06e zur Laufzeit setzen, falls er fehlt; true = neu gesetzt.
+/// Andere Quirks bleiben erhalten. Wirkt auf neue Anmeldungen bis zum Neustart des Rechners.
+fn quirk_setzen() -> Result<bool> {
+    const PFAD: &str = "/sys/module/usbcore/parameters/quirks";
+    let alt = std::fs::read_to_string(PFAD).unwrap_or_default().trim().to_string();
+    if alt.split(',').any(|q| q.to_ascii_lowercase().starts_with("2345:e06e:")) {
+        return Ok(false);
+    }
+    let neu = if alt.is_empty() { "2345:e06e:i".to_string() } else { format!("{alt},2345:e06e:i") };
+    std::fs::write(PFAD, &neu).map_err(|e| Error::other(format!("USB-Einstellung {PFAD} nicht zu setzen: {e}")))?;
+    eprintln!("usbcore.quirks: „{alt}“ → „{neu}“");
+    Ok(true)
+}
+
 /// Steckt eine C2 Lite mit Werks-Firmware am USB? (2345:e06e ohne „dazi“ im Produktnamen; das Easter Egg der eigenen Firmware)
 fn werk_am_usb() -> bool {
     let Ok(rd) = std::fs::read_dir("/sys/bus/usb/devices") else { return false };
@@ -250,8 +366,17 @@ fn werk_am_usb() -> bool {
 
 // ---------------------------------------------------------------- Benutzerseite
 
-/// Vorbereiten (Downloads, Brücke) und den Geräte-Teil über pkexec ausführen; Meldungen gehen an `melden`
-pub fn starten(firmware: &Path, probelauf: bool, melden: &mut dyn FnMut(Meldung)) -> Result<()> {
+/// Beim Bauen eingebettete Firmware (crate::paket, release/jl_isd.bin des Repos)
+const EINGEBAUT: &[u8] = crate::paket::JL_ISD;
+
+/// Stand der eingebauten Firmware, z. B. „C2 Lite Custom, Stufe 11c“
+pub fn eingebaut_stand() -> &'static str {
+    crate::paket::stand()
+}
+
+/// Prüft, dass am USB kein C2 Lite Custom hängt, und liefert den Pfad der Firmware für den root-Kern: die gewählte Datei
+/// oder (None) die eingebaute, in den Zwischenspeicher geschrieben
+fn vorbereiten(firmware: Option<&Path>, melden: &mut dyn FnMut(Meldung)) -> Result<PathBuf> {
     melden(Meldung::Schritt("Controller prüfen".into()));
     if crate::geraet::finden().is_some() {
         return Err(Error::other(
@@ -259,10 +384,25 @@ pub fn starten(firmware: &Path, probelauf: bool, melden: &mut dyn FnMut(Meldung)
              für Controller mit Werks-Firmware.",
         ));
     }
-    let jl_isd = std::fs::read(firmware).map_err(|e| Error::other(format!("{}: {e}", firmware.display())))?;
+    let (pfad, jl_isd) = match firmware {
+        Some(p) => (p.to_path_buf(), std::fs::read(p).map_err(|e| Error::other(format!("{}: {e}", p.display())))?),
+        None => {
+            let p = abbild::zwischenspeicher().join("jl_isd-eingebaut.bin");
+            std::fs::create_dir_all(abbild::zwischenspeicher())?;
+            std::fs::write(&p, EINGEBAUT)?;
+            (p, EINGEBAUT.to_vec())
+        }
+    };
     if jl_isd.len() % 0x1000 != 0 || jl_isd.len() > 0x7E000 || jl_isd.len() < 0x10000 {
-        return Err(Error::other(format!("{} ist kein Abbild von C2 Lite Custom (jl_isd.bin)", firmware.display())));
+        return Err(Error::other(format!("{} ist kein Abbild von C2 Lite Custom (jl_isd.bin)", pfad.display())));
     }
+    std::fs::canonicalize(&pfad)
+}
+
+/// Vorbereiten (Downloads, Brücke) und den Geräte-Teil über pkexec ausführen; Meldungen gehen an `melden`.
+/// `firmware` = None: eingebaute Firmware
+pub fn starten(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn FnMut(Meldung)) -> Result<()> {
+    let firmware = vorbereiten(firmware, melden)?;
     melden(Meldung::Schritt("Werks-Firmware 0.04 und Lader laden (einmalig, aus dem Internet)".into()));
     let werk = abbild::holen(abbild::WERK_URL, abbild::WERK_SHA256, "C2-lite-0.04.bin")?;
     download::lader_holen()?;
@@ -276,7 +416,7 @@ pub fn starten(firmware: &Path, probelauf: bool, melden: &mut dyn FnMut(Meldung)
         "installieren-kern".into(),
         bruecke_pfad.into(),
         cache.join("br23loader.bin").into(),
-        std::fs::canonicalize(firmware)?.into(),
+        firmware.into(),
         ordner.clone().into(),
         benutzer_text().into(),
     ];
@@ -284,6 +424,25 @@ pub fn starten(firmware: &Path, probelauf: bool, melden: &mut dyn FnMut(Meldung)
         args.push("probelauf".into());
     }
     kern_ausfuehren(&args, "installation", melden)
+}
+
+/// USB-Weg (Home + Y + X, docs/WERKS-DOWNLOAD.md): nur Lader laden und den Geräte-Teil über pkexec ausführen; keine
+/// Werks-Firmware-Datei und keine Brücke nötig
+pub fn starten_usb(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn FnMut(Meldung)) -> Result<()> {
+    let firmware = vorbereiten(firmware, melden)?;
+    melden(Meldung::Schritt("Lader laden (einmalig, aus dem Internet)".into()));
+    download::lader_holen()?;
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "installieren-usb-kern".into(),
+        abbild::zwischenspeicher().join("br23loader.bin").into(),
+        firmware.into(),
+        sicherungsordner().into(),
+        benutzer_text().into(),
+    ];
+    if probelauf {
+        args.push("probelauf".into());
+    }
+    kern_ausfuehren(&args, if probelauf { "probelauf-usb" } else { "installation-usb" }, melden)
 }
 
 /// Rückweg zur Werks-Firmware aus einer Sicherung der Installation (~/c2lite-sicherung/werk-sicherung-*.bin)
