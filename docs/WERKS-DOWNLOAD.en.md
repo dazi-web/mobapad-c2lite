@@ -1,9 +1,10 @@
 # USB download mode of the stock firmware (Home + Y + X)
 
-The stock firmware 0.04 of the Mobapad C2 Lite has its own entry into the ROM download mode: **Home + Y + X with
+The stock firmware of the Mobapad C2 Lite (0.04 and 0.05) has its own entry into the ROM download mode: **Home + Y + X with
 the USB cable connected**. The controller then shows up as "BR23 UBOOT1.00" (USB `4c4a:2342`, USB mass storage),
 so the flash can be read and written without the Bluetooth bridge and without an ESP32. **Confirmed on the device
-on 2026-10-31**: reading, writing and verifying the whole flash through this entry.
+on 2026-10-31**: reading, writing and verifying the whole flash through this entry, on a controller with stock
+firmware 0.05 (factory installed; beta channel of Mobapad's server, built 2026-08-28).
 
 Deutsche Fassung: [`WERKS-DOWNLOAD.md`](WERKS-DOWNLOAD.md).
 
@@ -81,7 +82,8 @@ A third way into download mode is a Bluetooth command (bytes 1..4 = `53 10 01 01
 
 ## References
 
-Addresses are offsets in the application of stock firmware 0.04 (runtime = offset + 0x1E000C0).
+Addresses are offsets in the application of stock firmware 0.04 (runtime = offset + 0x1E000C0); 0.05 is a new
+build with shifted code, the behaviour on the device is the same.
 
 - Combinations: function at 0x14bb6. USB update check 0x14e84..0x14ec2, jump 0x15248 → 0x14ac (= SDK
   `go_mask_usb_updata`).

@@ -1,9 +1,10 @@
 # USB-Download-Modus der Werks-Firmware (Home + Y + X)
 
-Die Werks-Firmware 0.04 des Mobapad C2 Lite hat einen eigenen Einstieg in den ROM-Download-Modus: **Home + Y + X
+Die Werks-Firmware des Mobapad C2 Lite (0.04 und 0.05) hat einen eigenen Einstieg in den ROM-Download-Modus: **Home + Y + X
 mit USB-Kabel**. Der Controller meldet sich dann als „BR23 UBOOT1.00“ (USB `4c4a:2342`, USB-Massenspeicher). Damit
 lässt sich der Flash ohne Bluetooth-Brücke und ohne ESP32 lesen und schreiben. **Am Gerät bestätigt am 31.10.2026**:
-Lesen, Schreiben und Prüfen des ganzen Flashs über diesen Einstieg.
+Lesen, Schreiben und Prüfen des ganzen Flashs über diesen Einstieg, an einem Controller mit Werks-Firmware 0.05
+(ab Werk installiert; Beta-Kanal des Mobapad-Servers, Baudatum 28.08.2026).
 
 English version: [`WERKS-DOWNLOAD.en.md`](WERKS-DOWNLOAD.en.md).
 
@@ -78,7 +79,8 @@ Sprung nach 100 ms). Er ist nicht erprobt.
 
 ## Belege
 
-Adressen sind Offsets in der App der Werks-Firmware 0.04 (Laufzeit = Offset + 0x1E000C0).
+Adressen sind Offsets in der App der Werks-Firmware 0.04 (Laufzeit = Offset + 0x1E000C0); in 0.05 ist der Code
+neu gebaut und verschoben, das Verhalten am Gerät ist dasselbe.
 
 - Kombinationen: Funktion bei 0x14bb6. USB-Update-Prüfung 0x14e84..0x14ec2, Sprung 0x15248 → 0x14ac (= SDK
   `go_mask_usb_updata`).
