@@ -70,7 +70,7 @@ fn malen(ui: &mut egui::Ui, s: Option<&Status>, getestet: u64, hervor: u64, zeit
     let rumpf = Rect::from_min_max(p(92.0, 70.0), p(508.0, 238.0));
     painter.rect_filled(rumpf, CornerRadius::same((64.0 * k) as u8), koerper);
     let beschriftung = |pos: Pos2, text: &str, farbe: Color32, groesse: f32| {
-        painter.text(pos, Align2::CENTER_CENTER, text, FontId::new(groesse * k, FontFamily::Name(FETT.into())), farbe);
+        painter.text(pos, Align2::CENTER_CENTER, crate::sprache::t(text), FontId::new(groesse * k, FontFamily::Name(FETT.into())), farbe);
     };
     if rueckseite {
         beschriftung(p(300.0, 288.0), "Rückseite", c.schwach, 11.0);

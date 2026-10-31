@@ -6,6 +6,7 @@
 use super::stil::{Farben, farben, hinweis, karte, knopf_haupt, titel};
 use super::{App, bild};
 use crate::installieren::Meldung;
+use crate::sprache::{t, t_meldung};
 use eframe::egui::{self, Align2, CornerRadius, FontId, Margin, Pos2, RichText, Stroke, Vec2};
 use egui_phosphor::regular as icon;
 use std::path::PathBuf;
@@ -68,6 +69,8 @@ impl Installation {
                 self.schritte.extend(["Sicherung des ganzen Speichers lesen", "C2 Lite Custom schreiben", "Prüfen"].map(String::from));
                 self.ergebnis = Some(Ok("C2 Lite Custom ist installiert und geprüft. Der Controller startet neu.".into()));
                 self.ende = Some(Instant::now());
+                self.schritte = self.schritte.iter().map(|s| t(s).to_string()).collect();
+                self.ergebnis = self.ergebnis.take().map(|e| e.map(|x| t(&x).to_string()));
                 return;
             }
             "uebertragung" => {
@@ -79,6 +82,9 @@ impl Installation {
                 self.hinweis = Some("Home + Y + X halten, bis das Brummen aufhört.".into());
             }
         }
+        self.schritte = self.schritte.iter().map(|s| t(s).to_string()).collect();
+        self.hinweis = self.hinweis.take().map(|h| t(&h).to_string());
+        self.ergebnis = self.ergebnis.take().map(|e| e.map(|x| t(&x).to_string()));
         // Läuft scheinbar: ein Kanal, dessen Sender nie endet (kein Thread, kein Gerät)
         let (tx, rx) = mpsc::channel::<Ereignis>();
         std::mem::forget(tx);
@@ -141,13 +147,14 @@ impl Installation {
                 Ok(Ereignis::Meldung(Meldung::Fortschritt(f))) => self.fortschritt = Some(f),
                 Ok(Ereignis::Meldung(Meldung::Fertig(t))) => self.ergebnis = Some(Ok(t)),
                 Ok(Ereignis::Ende(r)) => {
-                    ende = Some(r);
+                    // Fehler aus dem Hauptprozess (Kernzeilen sind schon übersetzt; übersetzt Gebliebenes bleibt)
+                    ende = Some(r.map_err(|e| t_meldung(&e)));
                     break;
                 }
                 Err(TryRecvError::Empty) => break,
                 // Thread ohne „Ende“ beendet (Absturz): nicht ewig „läuft“ anzeigen
                 Err(TryRecvError::Disconnected) => {
-                    ende = Some(Err("Abgebrochen (interner Fehler, siehe Protokoll in ~/c2lite-sicherung)".into()));
+                    ende = Some(Err(t("Abgebrochen (interner Fehler, siehe Protokoll in ~/c2lite-sicherung)").into()));
                     break;
                 }
             }
@@ -220,8 +227,8 @@ impl App {
                     );
                     let farbe = if gewaehlt { c.akzent } else { c.text };
                     p.text(rect.left_center() + Vec2::new(18.0, 0.0), Align2::LEFT_CENTER, ic, FontId::proportional(26.0), farbe);
-                    p.text(rect.left_center() + Vec2::new(56.0, -9.0), Align2::LEFT_CENTER, name, FontId::proportional(17.0), farbe);
-                    p.text(rect.left_center() + Vec2::new(56.0, 12.0), Align2::LEFT_CENTER, unter, FontId::proportional(13.0), c.schwach);
+                    p.text(rect.left_center() + Vec2::new(56.0, -9.0), Align2::LEFT_CENTER, t(name), FontId::proportional(17.0), farbe);
+                    p.text(rect.left_center() + Vec2::new(56.0, 12.0), Align2::LEFT_CENTER, t(unter), FontId::proportional(13.0), c.schwach);
                     if antwort.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         self.installation.weg = weg;
                     }
@@ -240,11 +247,11 @@ impl App {
                     (icon::PLUG, "Auf Aufforderung Kabel anstecken"),
                 ],
             };
-            for (n, (ic, t)) in schritte.iter().enumerate() {
+            for (n, (ic, text)) in schritte.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{}", n + 1)).strong().color(c.akzent));
                     ui.label(RichText::new(*ic).size(18.0).color(c.schwach));
-                    ui.label(*t);
+                    ui.label(t(text));
                 });
             }
             ui.add_space(12.0);
@@ -253,18 +260,18 @@ impl App {
             ui.horizontal(|ui| {
                 match &self.installation.firmware {
                     None => {
-                        ui.label(RichText::new("Firmware:").color(c.schwach));
-                        ui.label(crate::installieren::eingebaut_stand());
-                        if ui.small_button("Andere Datei …").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().add_filter("Firmware-Abbild", &["bin"]).pick_file() {
+                        ui.label(RichText::new(t("Firmware:")).color(c.schwach));
+                        ui.label(t_meldung(crate::installieren::eingebaut_stand()));
+                        if ui.small_button(t("Andere Datei …")).clicked() {
+                            if let Some(p) = rfd::FileDialog::new().add_filter(t("Firmware-Abbild"), &["bin"]).pick_file() {
                                 self.installation.firmware = Some(p);
                             }
                         }
                     }
                     Some(p) => {
-                        ui.label(RichText::new("Firmware:").color(c.schwach));
+                        ui.label(RichText::new(t("Firmware:")).color(c.schwach));
                         ui.label(p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
-                        if ui.small_button("Eingebaute nehmen").clicked() {
+                        if ui.small_button(t("Eingebaute nehmen")).clicked() {
                             self.installation.firmware = None;
                         }
                     }
@@ -274,18 +281,18 @@ impl App {
             ui.horizontal(|ui| {
                 let ctx = ui.ctx().clone();
                 if ui
-                    .button(format!("{}  Probelauf", icon::MAGNIFYING_GLASS))
-                    .on_hover_text("Prüft alles und sichert den Speicher. Schreibt nichts.")
+                    .button(format!("{}  {}", icon::MAGNIFYING_GLASS, t("Probelauf")))
+                    .on_hover_text(t("Prüft alles und sichert den Speicher. Schreibt nichts."))
                     .clicked()
                 {
                     self.installation.starten(&ctx, Auftrag::Probelauf);
                 }
-                if knopf_haupt(ui, &format!("{}  Installieren", icon::DOWNLOAD_SIMPLE)).clicked() {
+                if knopf_haupt(ui, &format!("{}  {}", icon::DOWNLOAD_SIMPLE, t("Installieren"))).clicked() {
                     self.installation.starten(&ctx, Auftrag::Installieren);
                 }
             });
             ui.add_space(6.0);
-            egui::CollapsingHeader::new(RichText::new("Was man braucht").color(c.schwach)).id_salt("braucht").show(ui, |ui| {
+            egui::CollapsingHeader::new(RichText::new(t("Was man braucht")).color(c.schwach)).id_salt("braucht").show(ui, |ui| {
                 hinweis(
                     ui,
                     match self.installation.weg {
@@ -302,7 +309,7 @@ impl App {
         ui.add_space(12.0);
         // Rückweg: selten gebraucht, darum eingeklappt
         karte(ui, |ui| {
-            egui::CollapsingHeader::new(RichText::new(format!("{}  Zurück zur Werks-Firmware", icon::ARROW_COUNTER_CLOCKWISE)).strong())
+            egui::CollapsingHeader::new(RichText::new(format!("{}  {}", icon::ARROW_COUNTER_CLOCKWISE, t("Zurück zur Werks-Firmware"))).strong())
                 .id_salt("rueckweg")
                 .show(ui, |ui| {
                     hinweis(ui, "Spielt die Sicherung von der Installation zurück. Controller mit C2 Lite Custom per Kabel anstecken.");
@@ -310,12 +317,12 @@ impl App {
                     ui.horizontal(|ui| {
                         match &self.installation.werk_sicherung {
                             Some(p) => ui.label(p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()),
-                            None => ui.label(RichText::new("keine Sicherung gefunden").color(c.schwach)),
+                            None => ui.label(RichText::new(t("keine Sicherung gefunden")).color(c.schwach)),
                         };
-                        if ui.small_button("Andere …").clicked() {
+                        if ui.small_button(t("Andere …")).clicked() {
                             if let Some(p) = rfd::FileDialog::new()
                                 .set_directory(crate::installieren::sicherungsordner())
-                                .add_filter("Werks-Sicherung", &["bin"])
+                                .add_filter(t("Werks-Sicherung"), &["bin"])
                                 .pick_file()
                             {
                                 self.installation.werk_sicherung = Some(p);
@@ -328,7 +335,7 @@ impl App {
                     let beschaeftigt = self.update_fortschritt.is_some() || self.weck_lauscht.is_some();
                     let bereit = self.installation.werk_sicherung.is_some() && !beschaeftigt;
                     let ctx = ui.ctx().clone();
-                    if ui.add_enabled(bereit, egui::Button::new("Werks-Firmware einspielen")).clicked() {
+                    if ui.add_enabled(bereit, egui::Button::new(t("Werks-Firmware einspielen"))).clicked() {
                         // Die Oberfläche hält den seriellen Port exklusiv: freigeben, damit der Kern den Controller erreicht
                         let _ = self.tx.send(super::arbeiter::Auftrag::Trennen);
                         self.neu_verbinden_ab = None;
@@ -358,9 +365,9 @@ impl App {
                     },
                 );
                 if let (true, Some(s)) = (laeuft, inst.start) {
-                    let t = s.elapsed().as_secs();
+                    let sek = s.elapsed().as_secs();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}:{:02}", t / 60, t % 60)).color(c.schwach).monospace());
+                        ui.label(RichText::new(format!("{}:{:02}", sek / 60, sek % 60)).color(c.schwach).monospace());
                     });
                 }
             });
@@ -413,8 +420,8 @@ impl App {
             if let Some(e) = &inst.ergebnis {
                 ui.add_space(8.0);
                 let (farbe, ic, text) = match e {
-                    Ok(t) => (c.akzent, icon::CHECK_CIRCLE, t.as_str()),
-                    Err(t) => (c.fehler, icon::WARNING_CIRCLE, t.as_str()),
+                    Ok(x) => (c.akzent, icon::CHECK_CIRCLE, x.as_str()),
+                    Err(x) => (c.fehler, icon::WARNING_CIRCLE, x.as_str()),
                 };
                 ui.label(RichText::new(format!("{ic}  {text}")).size(16.0).color(farbe));
             }

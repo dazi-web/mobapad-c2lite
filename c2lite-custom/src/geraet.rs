@@ -113,7 +113,7 @@ impl Kanal for Geraet {
                 }
             }
         }
-        Err(format!("keine Antwort auf „{befehl}“ (Firmware zu alt oder Controller beschäftigt?)"))
+        Err(crate::sprache::tr("keine Antwort auf „{}“ (Firmware zu alt oder Controller beschäftigt?)", &[&befehl]))
     }
 }
 

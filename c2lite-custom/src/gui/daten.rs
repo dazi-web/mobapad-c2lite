@@ -18,7 +18,7 @@ pub const LICHTMODI: &[(u8, &str)] =
     &[(2, "Regenbogen"), (3, "Farbwechsel"), (1, "Atmen"), (0, "Statisch"), (5, "Reaktiv"), (4, "Aus")];
 
 pub fn anzeigename(taste: &str) -> &str {
-    TASTEN.iter().chain(RICHTUNGEN).find(|(n, _)| *n == taste).map(|(_, a)| *a).unwrap_or(taste)
+    TASTEN.iter().chain(RICHTUNGEN).find(|(n, _)| *n == taste).map(|(_, a)| crate::sprache::t(a)).unwrap_or(taste)
 }
 
 /// `info:`-Zeile

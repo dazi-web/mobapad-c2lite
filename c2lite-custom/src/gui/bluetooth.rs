@@ -3,6 +3,7 @@
 //! Befehlskanal.
 
 use super::App;
+use crate::sprache::{t, t_meldung, tr};
 use super::stil::{farben, hinweis, karte, titel};
 use eframe::egui::{self, RichText};
 use egui_phosphor::regular as icon;
@@ -33,7 +34,7 @@ impl App {
                 }
                 Ok(Err(e)) => {
                     self.bt_pc.test = None;
-                    self.melden(format!("Vibration über Bluetooth: {e}"), true);
+                    self.melden(tr("Vibration über Bluetooth: {}", &[&t_meldung(&e)]), true);
                 }
                 Err(mpsc::TryRecvError::Disconnected) => self.bt_pc.test = None,
                 Err(mpsc::TryRecvError::Empty) => ui.ctx().request_repaint_after(Duration::from_millis(200)),
@@ -56,12 +57,12 @@ impl App {
                     } else {
                         (icon::WARNING_CIRCLE, c.warnung, "Verbunden, aber ohne Vibration (Treiber prüfen)")
                     };
-                    ui.label(RichText::new(format!("{ic}  {text}")).color(farbe));
-                    hinweis(ui, &format!("Treiber: {}", if g.treiber.is_empty() { "?" } else { &g.treiber }));
+                    ui.label(RichText::new(format!("{ic}  {}", t(text))).color(farbe));
+                    hinweis(ui, &tr("Treiber: {}", &[&if g.treiber.is_empty() { "?" } else { &g.treiber }]));
                     ui.add_space(6.0);
                     let laeuft = self.bt_pc.test.is_some();
                     ui.add_enabled_ui(g.vibration && !laeuft, |ui| {
-                        if ui.button(format!("{}  Vibration über Bluetooth testen", icon::VIBRATE)).clicked() {
+                        if ui.button(format!("{}  {}", icon::VIBRATE, t("Vibration über Bluetooth testen"))).clicked() {
                             let (tx, rx) = mpsc::channel();
                             self.bt_pc.test = Some(rx);
                             std::thread::spawn(move || {

@@ -1,5 +1,6 @@
 //! Live-Ansicht zum Testen: Tasten, Sticks, Schieber, Akku; LEDs und Vibration per Tastatur.
 
+use crate::sprache::{t, tr};
 use crate::geraet::{Kanal, Status, SCHIEBER_PA3, SCHIEBER_PC3, TASTEN};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -22,7 +23,7 @@ pub fn starten(g: &mut dyn Kanal) -> Result<(), String> {
     let mut z = Zustand {
         status: Status::default(),
         getestet: 0,
-        meldung: "Tasten drücken, Sticks bewegen. 1–4 Spieler-LED umschalten, a alle, l Lauflicht, v/b Vibration, q Ende"
+        meldung: t("Tasten drücken, Sticks bewegen. 1–4 Spieler-LED umschalten, a alle, l Lauflicht, v/b Vibration, q Ende")
             .into(),
         lauflicht: None,
         port: g.name(),
@@ -31,7 +32,7 @@ pub fn starten(g: &mut dyn Kanal) -> Result<(), String> {
     let ergebnis = schleife(g, &mut z, &mut terminal);
     ratatui::restore();
     let n = TASTEN.iter().filter(|(_, b)| z.getestet & (1u64 << b) != 0).count();
-    println!("Getestet: {n} von {} Tasten.", TASTEN.len());
+    println!("{}", tr("Getestet: {} von {} Tasten.", &[&n, &TASTEN.len()]));
     ergebnis
 }
 
@@ -49,12 +50,12 @@ fn schleife(g: &mut dyn Kanal, z: &mut Zustand, terminal: &mut ratatui::DefaultT
                 if soll >= 4 {
                     z.lauflicht = None;
                     let _ = g.befehl("led auto", &["ok:"], Duration::from_millis(400));
-                    z.meldung = "Lauflicht fertig: Spieler-LED 1 bis 4 nacheinander.".into();
+                    z.meldung = t("Lauflicht fertig: Spieler-LED 1 bis 4 nacheinander.").into();
                 } else {
                     let m = crate::spieler_bit(soll + 1);
                     let _ = g.befehl(&format!("led {m}"), &["ok:"], Duration::from_millis(400));
                     z.lauflicht = Some((start, soll));
-                    z.meldung = format!("Lauflicht: jetzt leuchtet Spieler-LED {}", soll + 1);
+                    z.meldung = tr("Lauflicht: jetzt leuchtet Spieler-LED {}", &[&(soll + 1)]);
                 }
             }
         }
@@ -73,21 +74,21 @@ fn schleife(g: &mut dyn Kanal, z: &mut Zustand, terminal: &mut ratatui::DefaultT
                 KeyCode::Char(c @ '1'..='4') => {
                     let m = z.status.led ^ crate::spieler_bit(c as u8 - b'0');
                     let _ = led(g, m);
-                    z.meldung = format!("Spieler-LED {c} umgeschaltet (Maske 0x{m:02x})");
+                    z.meldung = tr("Spieler-LED {} umgeschaltet (Maske {})", &[&c, &format!("0x{m:02x}")]);
                 }
                 KeyCode::Char('a') => {
                     let m = if z.status.led & 0x3c == 0x3c { 0 } else { 0x3c };
                     let _ = led(g, m);
-                    z.meldung = if m != 0 { "Alle LEDs an".into() } else { "Alle LEDs aus".into() };
+                    z.meldung = t(if m != 0 { "Alle LEDs an" } else { "Alle LEDs aus" }).into();
                 }
                 KeyCode::Char('l') => z.lauflicht = Some((Instant::now(), u8::MAX)),
                 KeyCode::Char('v') => {
                     let _ = g.befehl("motor 60 0 500", &["ok:"], Duration::from_millis(400));
-                    z.meldung = "Linker Motor 60 % für 0,5 s".into();
+                    z.meldung = t("Linker Motor 60 % für 0,5 s").into();
                 }
                 KeyCode::Char('b') => {
                     let _ = g.befehl("motor 0 60 500", &["ok:"], Duration::from_millis(400));
-                    z.meldung = "Rechter Motor 60 % für 0,5 s".into();
+                    z.meldung = t("Rechter Motor 60 % für 0,5 s").into();
                 }
                 _ => {}
             }
@@ -104,25 +105,19 @@ fn zeichnen(f: &mut Frame, z: &Zustand) {
     } else if s.gedrueckt(SCHIEBER_PA3) {
         "PA3"
     } else {
-        "keine Stellung"
+        t("keine Stellung")
     };
     let n = TASTEN.iter().filter(|(_, b)| z.getestet & (1u64 << b) != 0).count();
-    let kopfzeile = format!(
-        "Akku {} %   USB {}   Schieber {}   LEDs 0x{:02x}   getestet {}/{}   ({})",
-        s.akku,
-        if s.usb { "an" } else { "aus" },
-        schieber,
-        s.led,
-        n,
-        TASTEN.len(),
-        z.port
+    let kopfzeile = tr(
+        "Akku {} %   USB {}   Schieber {}   LEDs {}   getestet {}/{}   ({})",
+        &[&s.akku, &t(if s.usb { "an" } else { "aus" }), &schieber, &format!("0x{:02x}", s.led), &n, &TASTEN.len(), &z.port],
     );
-    f.render_widget(Paragraph::new(kopfzeile).block(Block::bordered().title(" c2lite-custom – Controller-Test ")), kopf);
+    f.render_widget(Paragraph::new(kopfzeile).block(Block::bordered().title(t(" c2lite-custom – Controller-Test "))), kopf);
 
     let [links, tasten, rechts] =
         Layout::horizontal([Constraint::Length(26), Constraint::Min(30), Constraint::Length(26)]).areas(mitte);
-    stick(f, links, " linker Stick ", s.achsen[0], s.achsen[1], s.gedrueckt(13));
-    stick(f, rechts, " rechter Stick ", s.achsen[2], s.achsen[3], s.gedrueckt(14));
+    stick(f, links, t(" linker Stick "), s.achsen[0], s.achsen[1], s.gedrueckt(13));
+    stick(f, rechts, t(" rechter Stick "), s.achsen[2], s.achsen[3], s.gedrueckt(14));
 
     let mut zeilen: Vec<Line> = Vec::new();
     for reihe in TASTEN.chunks(4) {
@@ -136,14 +131,14 @@ fn zeichnen(f: &mut Frame, z: &Zustand) {
                 } else {
                     Style::new().fg(Color::DarkGray)
                 };
-                [Span::styled(format!(" {name:^8} "), stil), Span::raw(" ")]
+                [Span::styled(format!(" {:^8} ", t(name)), stil), Span::raw(" ")]
             })
             .collect();
         zeilen.push(Line::from(spans));
         zeilen.push(Line::raw(""));
     }
     f.render_widget(
-        Paragraph::new(zeilen).block(Block::bordered().title(" Tasten (grün = schon getestet) ")),
+        Paragraph::new(zeilen).block(Block::bordered().title(t(" Tasten (grün = schon getestet) "))),
         tasten,
     );
     f.render_widget(Paragraph::new(z.meldung.as_str()).wrap(Wrap { trim: true }).block(Block::bordered()), fuss);

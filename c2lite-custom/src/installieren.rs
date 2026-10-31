@@ -9,6 +9,7 @@
 //! der Sicherung der Installation (abbild::werk_abbild) schreiben und prüfen.
 
 use crate::{abbild, download, werk_ble, werk_usb};
+use crate::sprache::{t, t_meldung, tr};
 use std::io::{BufRead, BufReader, Error, Result, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -377,12 +378,12 @@ pub fn eingebaut_stand() -> &'static str {
 /// Prüft, dass am USB kein C2 Lite Custom hängt, und liefert den Pfad der Firmware für den root-Kern: die gewählte Datei
 /// oder (None) die eingebaute, in den Zwischenspeicher geschrieben
 fn vorbereiten(firmware: Option<&Path>, melden: &mut dyn FnMut(Meldung)) -> Result<PathBuf> {
-    melden(Meldung::Schritt("Controller prüfen".into()));
+    melden(Meldung::Schritt(t("Controller prüfen").into()));
     if crate::geraet::finden().is_some() {
-        return Err(Error::other(
+        return Err(Error::other(t(
             "Am USB hängt schon ein Controller mit C2 Lite Custom. Updates gehen über die Seite „Firmware“; die Erstinstallation ist \
              für Controller mit Werks-Firmware.",
-        ));
+        )));
     }
     let (pfad, jl_isd) = match firmware {
         Some(p) => (p.to_path_buf(), std::fs::read(p).map_err(|e| Error::other(format!("{}: {e}", p.display())))?),
@@ -394,7 +395,7 @@ fn vorbereiten(firmware: Option<&Path>, melden: &mut dyn FnMut(Meldung)) -> Resu
         }
     };
     if jl_isd.len() % 0x1000 != 0 || jl_isd.len() > 0x7E000 || jl_isd.len() < 0x10000 {
-        return Err(Error::other(format!("{} ist kein Abbild von C2 Lite Custom (jl_isd.bin)", pfad.display())));
+        return Err(Error::other(tr("{} ist kein Abbild von C2 Lite Custom (jl_isd.bin)", &[&pfad.display()])));
     }
     std::fs::canonicalize(&pfad)
 }
@@ -403,10 +404,10 @@ fn vorbereiten(firmware: Option<&Path>, melden: &mut dyn FnMut(Meldung)) -> Resu
 /// `firmware` = None: eingebaute Firmware
 pub fn starten(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn FnMut(Meldung)) -> Result<()> {
     let firmware = vorbereiten(firmware, melden)?;
-    melden(Meldung::Schritt("Werks-Firmware 0.04 und Lader laden (einmalig, aus dem Internet)".into()));
+    melden(Meldung::Schritt(t("Werks-Firmware 0.04 und Lader laden (einmalig, aus dem Internet)").into()));
     let werk = abbild::holen(abbild::WERK_URL, abbild::WERK_SHA256, "C2-lite-0.04.bin")?;
     download::lader_holen()?;
-    melden(Meldung::Schritt("Brücke bauen".into()));
+    melden(Meldung::Schritt(t("Brücke bauen").into()));
     let bruecke = abbild::bruecke_bauen(&werk)?;
     let cache = abbild::zwischenspeicher();
     let bruecke_pfad = cache.join("bruecke2.bin");
@@ -430,7 +431,7 @@ pub fn starten(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn FnMut(
 /// Werks-Firmware-Datei und keine Brücke nötig
 pub fn starten_usb(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn FnMut(Meldung)) -> Result<()> {
     let firmware = vorbereiten(firmware, melden)?;
-    melden(Meldung::Schritt("Lader laden (einmalig, aus dem Internet)".into()));
+    melden(Meldung::Schritt(t("Lader laden (einmalig, aus dem Internet)").into()));
     download::lader_holen()?;
     let mut args: Vec<std::ffi::OsString> = vec![
         "installieren-usb-kern".into(),
@@ -447,10 +448,10 @@ pub fn starten_usb(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn Fn
 
 /// Rückweg zur Werks-Firmware aus einer Sicherung der Installation (~/c2lite-sicherung/werk-sicherung-*.bin)
 pub fn werk_zurueck(sicherung: &Path, melden: &mut dyn FnMut(Meldung)) -> Result<()> {
-    melden(Meldung::Schritt("Sicherung prüfen".into()));
+    melden(Meldung::Schritt(t("Sicherung prüfen").into()));
     let s = std::fs::read(sicherung).map_err(|e| Error::other(format!("{}: {e}", sicherung.display())))?;
     let soll = abbild::werk_abbild(&s)?;
-    melden(Meldung::Schritt("Lader laden".into()));
+    melden(Meldung::Schritt(t("Lader laden").into()));
     download::lader_holen()?;
     let cache = abbild::zwischenspeicher();
     let soll_pfad = cache.join("werk-rueckweg.bin");
@@ -489,7 +490,7 @@ fn kern_ausfuehren(args: &[std::ffi::OsString], name: &str, melden: &mut dyn FnM
     let protokoll_pfad = ordner.join(format!("{name}-{}.log", zeitstempel()));
     let protokoll = std::fs::File::create(&protokoll_pfad)?;
 
-    melden(Meldung::Schritt("Rechte für Bluetooth und Download-Modus anfordern".into()));
+    melden(Meldung::Schritt(t("Rechte für Bluetooth und Download-Modus anfordern").into()));
     // Nach einem Neubau während das Programm läuft, meldet Linux „… (deleted)“: dann die neue Datei am selben Ort nehmen
     let exe = std::env::current_exe()?;
     let exe = match exe.to_str().and_then(|t| t.strip_suffix(" (deleted)")) {
@@ -502,11 +503,11 @@ fn kern_ausfuehren(args: &[std::ffi::OsString], name: &str, melden: &mut dyn FnM
         let z = z?;
         let (art, rest) = z.split_once(' ').unwrap_or((z.as_str(), ""));
         match art {
-            "SCHRITT" => melden(Meldung::Schritt(rest.into())),
-            "HINWEIS" => melden(Meldung::Hinweis(rest.into())),
+            "SCHRITT" => melden(Meldung::Schritt(t_meldung(rest))),
+            "HINWEIS" => melden(Meldung::Hinweis(t_meldung(rest))),
             "FORTSCHRITT" => melden(Meldung::Fortschritt(rest.parse().unwrap_or(0.0))),
-            "FERTIG" => ergebnis = Some(Ok(rest.into())),
-            "FEHLER" => ergebnis = Some(Err(rest.into())),
+            "FERTIG" => ergebnis = Some(Ok(t_meldung(rest))),
+            "FEHLER" => ergebnis = Some(Err(t_meldung(rest))),
             _ => {}
         }
     }
@@ -516,15 +517,15 @@ fn kern_ausfuehren(args: &[std::ffi::OsString], name: &str, melden: &mut dyn FnM
             melden(Meldung::Fertig(t));
             Ok(())
         }
-        Some(Err(t)) => Err(Error::other(format!("{t} (Protokoll: {})", protokoll_pfad.display()))),
+        Some(Err(t)) => Err(Error::other(tr("{} (Protokoll: {})", &[&t, &protokoll_pfad.display()]))),
         None => {
             // Der Kern hat nichts gemeldet: Grund steht im Protokoll (z. B. Passwortabfrage abgebrochen, pkexec-Fehler)
             let grund = std::fs::read_to_string(&protokoll_pfad).unwrap_or_default();
             let grund = grund.lines().find(|z| !z.trim().is_empty()).unwrap_or("").to_string();
             Err(Error::other(match (status.code(), grund.is_empty()) {
-                (Some(126), true) => "Rechte wurden nicht erteilt (Passwortabfrage abgebrochen).".to_string(),
-                (_, false) => format!("Abgebrochen: {grund}"),
-                _ => format!("Abgebrochen (Protokoll: {})", protokoll_pfad.display()),
+                (Some(126), true) => t("Rechte wurden nicht erteilt (Passwortabfrage abgebrochen).").to_string(),
+                (_, false) => tr("Abgebrochen: {}", &[&grund]),
+                _ => tr("Abgebrochen (Protokoll: {})", &[&protokoll_pfad.display()]),
             }))
         }
     }

@@ -129,7 +129,7 @@ installation). With your own backup from step 1: write it back in download mode
 
 `c2lite-custom/`: build with `cargo build --release`, binary `target/release/c2lite-custom`. Without arguments it
 opens a GUI (overview, button test, mapping & turbo, light & rumble, firmware update, diagnostics, backup; the GUI
-is in German). It finds the controller by itself via USB (PC mode) or via Bluetooth with `--bluetooth`. On Linux
+is in English or German). It finds the controller by itself via USB (PC mode) or via Bluetooth with `--bluetooth`. On Linux
 the user must be in the `dialout` group.
 
 ```

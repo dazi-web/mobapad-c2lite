@@ -48,7 +48,7 @@ pub fn finden() -> Option<BtGamepad> {
 /// Links (stark), Pause, rechts (schwach), je 0,6 s; blockiert etwa 2 s
 pub fn vibration_testen(g: &BtGamepad) -> Result<(), String> {
     let fehler = |e: std::io::Error| match e.kind() {
-        std::io::ErrorKind::PermissionDenied => format!("Kein Zugriff auf {} (Rechte)", g.event.display()),
+        std::io::ErrorKind::PermissionDenied => crate::sprache::tr("Kein Zugriff auf {} (Rechte)", &[&g.event.display()]),
         _ => format!("{}: {e}", g.event.display()),
     };
     for (stark, schwach) in [(0xFFFF, 0), (0, 0xFFFF)] {

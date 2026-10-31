@@ -20,6 +20,9 @@ Mit dieser Firmware:
 
 ## So sieht `c2lite-custom` aus
 
+Das Programm gibt es auf Deutsch und Englisch (Umschalter DE/EN unten links; es startet in der Systemsprache,
+`C2LITE_SPRACHE=de` oder `en` legt sie fest).
+
 | | |
 |---|---|
 | ![Übersicht: Modus, Akku, Firmware-Stand, Verbindung, Switch 2 aufwecken](docs/bilder/uebersicht.png) | ![Tastentest mit allen Tasten, Sticks, Spieler-LEDs und Vibration](docs/bilder/tastentest.png) |

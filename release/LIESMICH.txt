@@ -10,4 +10,5 @@ Vorher den Abschnitt „Risiken“ in der README lesen. Nutzung auf eigenes Risi
 
 English: jl_isd.bin = first install from the factory firmware (c2lite-custom, page "Installieren");
 db_update_data.bin = update when C2 Lite Custom is already running (page "Firmware" or `c2lite-custom update`).
+The program c2lite-custom is in English and German (switch at the bottom left).
 Check with `sha256sum -c SHA256SUMS`. Read the "Risks" section in the README first. Use at your own risk.

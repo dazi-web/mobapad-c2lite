@@ -21,7 +21,8 @@ With this firmware:
 
 ## What `c2lite-custom` looks like
 
-The program is in German.
+The program speaks English and German: DE/EN switch at the bottom left, it starts in the system language
+(`C2LITE_SPRACHE=en` or `de` overrides). The pictures show the German version.
 
 | | |
 |---|---|
@@ -102,8 +103,8 @@ descriptor of the Xbox Wireless Controller comes from
   without the Bluetooth bridge and without an ESP32
   to know to build your own
 
-The program, tools and most documents are in German; commands and file names are German words
-(`installieren` = install, `sicherung` = backup, `werk` = factory).
+The program is in English and German; tools and most documents are in German. Commands and file names are German
+words (`installieren` = install, `sicherung` = backup, `werk` = factory); `c2lite-custom help` explains them in English.
 
 Folders: `c2lite-custom/` program, `sdk-arbeit/sdk-aenderungen.patch` firmware (changes to the Jieli SDK),
 `release/` prebuilt firmware, `werkzeuge/` building, packing, download mode, `c6-rettung/` rescue sender.

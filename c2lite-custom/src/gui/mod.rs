@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
+use crate::sprache::{t, tr};
 use stil::{farben, hinweis, karte, knopf_haupt, titel};
 
 pub fn starten() -> Result<(), String> {
@@ -204,7 +205,9 @@ impl App {
     }
 
     fn melden(&mut self, text: impl Into<String>, fehler: bool) {
-        self.meldung = Some(Meldungstext { text: text.into(), fehler, seit: Instant::now() });
+        // Feste Sätze werden übersetzt; zusammengesetzte über sprache::tr an der Aufrufstelle
+        let text = crate::sprache::t_meldung(&text.into());
+        self.meldung = Some(Meldungstext { text, fehler, seit: Instant::now() });
     }
 
     fn alles_laden(&self) {
@@ -266,7 +269,7 @@ impl App {
                     } else if let Some(g) = grund {
                         // Der stille Versuch beim Start soll keinen Fehler zeigen
                         if war_verbunden || self.letzte_info.elapsed() > Duration::from_secs(2) {
-                            self.fehler = Some(g);
+                            self.fehler = Some(crate::sprache::t_meldung(&g));
                         }
                     }
                 }
@@ -284,18 +287,18 @@ impl App {
                             self.update_datei = None;
                             self.spaeter_verbinden(7);
                         }
-                        Err(e) => self.melden(format!("Update abgebrochen: {e}. Die bisherige Firmware läuft weiter."), true),
+                        Err(e) => self.melden(tr("Update abgebrochen: {}. Die bisherige Firmware läuft weiter.", &[&crate::sprache::t_meldung(&e)]), true),
                     }
                 }
                 Meldung::WeckenFertig(r) => {
                     let abgebrochen = self.weck_lauscht.take().is_some_and(|(a, _)| a.load(Ordering::Relaxed));
                     match r {
                         Ok(k) => {
-                            self.melden(format!("Wecken eingerichtet mit {} {}.", k.name(), k.adresse), false);
+                            self.melden(tr("Wecken eingerichtet mit {} {}.", &[&t(k.name()), &k.adresse]), false);
                             self.weck = Some(Some(k));
                         }
                         Err(_) if abgebrochen => {}
-                        Err(e) => self.melden(format!("Wecken einrichten: {e}"), true),
+                        Err(e) => self.melden(tr("Wecken einrichten: {}", &[&crate::sprache::t_meldung(&e)]), true),
                     }
                     self.senden(Zweck::SwitchDiag, vec!["switch diag".into()]);
                 }
@@ -353,7 +356,7 @@ impl App {
                 }
                 if let Some((_, name)) = gespeichert {
                     if fehler.is_none() {
-                        self.melden(format!("{name} gespeichert."), false);
+                        self.melden(tr("{} gespeichert.", &[&t(&name)]), false);
                     }
                 }
                 self.belegung = Some(b);
@@ -396,28 +399,29 @@ impl App {
         };
         let b = Belegung::lesen(zeilen);
         let stand = self.info.as_ref().map(|i| i.stand.clone()).unwrap_or_default();
-        let mut text = format!(
-            "# C2 Lite Backup (c2lite-custom), Firmware-Stand {stand}\n# Jede Zeile ist ein Firmware-Befehl. Einspielen: c2lite-custom, Seite Backup.\n"
+        let mut text = tr(
+            "# C2 Lite Backup (c2lite-custom), Firmware-Stand {}\n# Jede Zeile ist ein Firmware-Befehl. Einspielen: c2lite-custom, Seite Backup.\n",
+            &[&stand],
         );
         for z in e.befehle().into_iter().chain(b.befehle()) {
             text.push_str(&z);
             text.push('\n');
         }
         if let Some(pfad) = rfd::FileDialog::new()
-            .set_title("Backup speichern")
+            .set_title(t("Backup speichern"))
             .set_file_name("c2lite-backup.txt")
             .add_filter("Backup", &["txt"])
             .save_file()
         {
             match std::fs::write(&pfad, text) {
-                Ok(()) => self.melden(format!("Backup gespeichert: {}", pfad.display()), false),
-                Err(e) => self.melden(format!("Backup nicht gespeichert: {e}"), true),
+                Ok(()) => self.melden(tr("Backup gespeichert: {}", &[&pfad.display()]), false),
+                Err(e) => self.melden(tr("Backup nicht gespeichert: {}", &[&e]), true),
             }
         }
     }
 
     fn backup_laden(&mut self) {
-        let Some(pfad) = rfd::FileDialog::new().set_title("Backup laden").add_filter("Backup", &["txt"]).pick_file() else {
+        let Some(pfad) = rfd::FileDialog::new().set_title(t("Backup laden")).add_filter("Backup", &["txt"]).pick_file() else {
             return;
         };
         let text = match std::fs::read_to_string(&pfad) {
@@ -432,7 +436,7 @@ impl App {
             .collect();
         // Nur Befehle, die Einstellungen ändern: ein Backup darf kein Update oder den Download-Modus auslösen
         if let Some(z) = befehle.iter().find(|z| !["setze ", "belegung ", "turbo "].iter().any(|p| z.starts_with(p))) {
-            return self.melden(format!("Kein gültiges Backup (unerwartete Zeile „{z}“)"), true);
+            return self.melden(tr("Kein gültiges Backup (unerwartete Zeile „{}“)", &[z]), true);
         }
         if befehle.is_empty() {
             return self.melden("Das Backup ist leer", true);
@@ -583,7 +587,7 @@ impl App {
             ui.painter().text(
                 rect.left_center() + Vec2::new(12.0, 0.0),
                 egui::Align2::LEFT_CENTER,
-                format!("{ic}   {name}"),
+                format!("{ic}   {}", t(name)),
                 egui::FontId::proportional(15.0),
                 farbe,
             );
@@ -594,19 +598,29 @@ impl App {
         let gesperrt = self.installation_laeuft();
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
+            // Sprache ganz unten: DE | EN
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(icon::TRANSLATE).color(c.schwach));
+                let en = crate::sprache::englisch();
+                for (wahl_en, kurz) in [(false, "DE"), (true, "EN")] {
+                    if ui.add(egui::Button::new(kurz).selected(en == wahl_en).frame_when_inactive(true).small()).clicked() && en != wahl_en {
+                        crate::sprache::waehlen(wahl_en);
+                    }
+                }
+            });
+            ui.add_space(4.0);
             match &self.verbindung {
                 Verbindung::Verbunden(weg, name) => {
                     let weg = *weg;
                     let name = name.clone();
-                    if ui.add_sized([ui.available_width(), 32.0], egui::Button::new("Trennen")).clicked() {
+                    if ui.add_sized([ui.available_width(), 32.0], egui::Button::new(t("Trennen"))).clicked() {
                         let _ = self.tx.send(Auftrag::Trennen);
                     }
                     let _ = name;
                     ui.label(
-                        RichText::new(format!(
+                        RichText::new(tr(
                             "{}  Verbunden über {}",
-                            if weg == Weg::Usb { icon::USB } else { icon::BLUETOOTH },
-                            if weg == Weg::Usb { "USB" } else { "Bluetooth" }
+                            &[&if weg == Weg::Usb { icon::USB } else { icon::BLUETOOTH }, &if weg == Weg::Usb { "USB" } else { "Bluetooth" }],
                         ))
                         .color(c.akzent),
                     );
@@ -615,13 +629,13 @@ impl App {
                     let text = if *weg == Weg::Usb { "Suche am USB" } else { "Suche per Bluetooth (bis 15 s)" };
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new(text).color(c.schwach));
+                        ui.label(RichText::new(t(text)).color(c.schwach));
                     });
                 }
                 Verbindung::Getrennt => {
                     // Während Installation/Rückweg gehört der Controller dem Installer: nicht dazwischen verbinden
                     ui.add_enabled_ui(!gesperrt, |ui| {
-                        if ui.add_sized([ui.available_width(), 32.0], egui::Button::new(format!("{}  Bluetooth", icon::BLUETOOTH))).clicked() {
+                        if ui.add_sized([ui.available_width(), 32.0], egui::Button::new(format!("{}  {}", icon::BLUETOOTH, t("Bluetooth")))).clicked() {
                             self.verbinden(Weg::Bluetooth);
                         }
                         let w = ui.available_width();
@@ -629,21 +643,21 @@ impl App {
                         if ui
                             .add_sized(
                                 [w, 34.0],
-                                egui::Button::new(RichText::new(format!("{}  USB verbinden", icon::USB)).color(c2.akzent_text)).fill(c2.akzent),
+                                egui::Button::new(RichText::new(format!("{}  {}", icon::USB, t("USB verbinden"))).color(c2.akzent_text)).fill(c2.akzent),
                             )
                             .clicked()
                         {
                             self.verbinden(Weg::Usb);
                         }
                     });
-                    ui.label(RichText::new(if gesperrt { "Installation läuft" } else { "Nicht verbunden" }).color(c.schwach));
+                    ui.label(RichText::new(t(if gesperrt { "Installation läuft" } else { "Nicht verbunden" })).color(c.schwach));
                 }
             }
         });
     }
 
     fn kopf(&self, ui: &mut egui::Ui, text: &str, unterzeile: &str) {
-        ui.heading(text);
+        ui.heading(crate::sprache::t(text));
         if !unterzeile.is_empty() {
             hinweis(ui, unterzeile);
         }
@@ -669,12 +683,12 @@ impl App {
                         "Er wartet auf Firmware. Auf „Installieren“ die Installation oder den Rückweg neu starten. Kabel stecken lassen.",
                     ),
                 };
-                ui.heading(titel_text);
+                ui.heading(t(titel_text));
                 ui.add_space(4.0);
-                ui.label(RichText::new(text).color(c.schwach));
+                ui.label(RichText::new(t(text)).color(c.schwach));
                 ui.add_space(16.0);
                 if ui
-                    .add_sized([220.0, 38.0], egui::Button::new(RichText::new(format!("{}  Zur Installation", icon::DOWNLOAD_SIMPLE)).color(c.akzent_text)).fill(c.akzent))
+                    .add_sized([220.0, 38.0], egui::Button::new(RichText::new(format!("{}  {}", icon::DOWNLOAD_SIMPLE, t("Zur Installation"))).color(c.akzent_text)).fill(c.akzent))
                     .clicked()
                 {
                     self.seite = Seite::Installieren;
@@ -682,10 +696,10 @@ impl App {
                 ui.ctx().request_repaint_after(Duration::from_secs(1));
                 return;
             }
-            ui.heading("Kein Controller verbunden");
+            ui.heading(t("Kein Controller verbunden"));
             ui.add_space(4.0);
             ui.label(
-                RichText::new("USB-Kabel anstecken (Schieber auf PC) oder per Bluetooth verbinden.").color(c.schwach),
+                RichText::new(t("USB-Kabel anstecken (Schieber auf PC) oder per Bluetooth verbinden.")).color(c.schwach),
             );
             ui.add_space(16.0);
             match self.verbindung {
@@ -697,12 +711,12 @@ impl App {
                         let breite = 2.0 * 190.0 + ui.spacing().item_spacing.x;
                         ui.add_space(((ui.available_width() - breite) / 2.0).max(0.0));
                         if ui
-                            .add_sized([190.0, 38.0], egui::Button::new(RichText::new(format!("{}  USB verbinden", icon::USB)).color(c.akzent_text)).fill(c.akzent))
+                            .add_sized([190.0, 38.0], egui::Button::new(RichText::new(format!("{}  {}", icon::USB, t("USB verbinden"))).color(c.akzent_text)).fill(c.akzent))
                             .clicked()
                         {
                             self.verbinden(Weg::Usb);
                         }
-                        if ui.add_sized([190.0, 38.0], egui::Button::new(format!("{}  Bluetooth", icon::BLUETOOTH))).clicked() {
+                        if ui.add_sized([190.0, 38.0], egui::Button::new(format!("{}  {}", icon::BLUETOOTH, t("Bluetooth")))).clicked() {
                             self.verbinden(Weg::Bluetooth);
                         }
                     });
@@ -759,7 +773,7 @@ impl App {
                     Some(false) => (icon::CPU, "PC", "USB und Bluetooth LE"),
                     None => (icon::CIRCLE_NOTCH, "...", ""),
                 };
-                ui.label(RichText::new(format!("{ic}  {text}")).size(26.0).strong());
+                ui.label(RichText::new(format!("{ic}  {}", t(text))).size(26.0).strong());
                 hinweis(ui, unter);
             });
             karte(&mut sp[1], |ui| {
@@ -768,10 +782,10 @@ impl App {
                     Some(i) if i.akku_prozent > 0 => {
                         let ic = if i.usb5v { icon::BATTERY_CHARGING } else { icon::BATTERY_FULL };
                         ui.label(RichText::new(format!("{ic}  {} %", i.akku_prozent)).size(26.0).strong());
-                        hinweis(ui, &format!("{:.2} V, {}", i.akku_mv as f32 / 1000.0, if i.usb5v { "am USB" } else { "Akkubetrieb" }));
+                        hinweis(ui, &format!("{:.2} V, {}", i.akku_mv as f32 / 1000.0, t(if i.usb5v { "am USB" } else { "Akkubetrieb" })));
                     }
                     _ => {
-                        ui.label(RichText::new("...").size(26.0));
+                        ui.label(RichText::new(t("...")).size(26.0));
                     }
                 }
             });
@@ -779,11 +793,11 @@ impl App {
                 hinweis(ui, "Firmware");
                 match &info {
                     Some(i) => {
-                        ui.label(RichText::new(format!("Stand {}", i.stand)).size(26.0).strong());
-                        hinweis(ui, &format!("gebaut {}", i.gebaut));
+                        ui.label(RichText::new(tr("Stand {}", &[&i.stand])).size(26.0).strong());
+                        hinweis(ui, &tr("gebaut {}", &[&i.gebaut]));
                     }
                     None => {
-                        ui.label(RichText::new("...").size(26.0));
+                        ui.label(RichText::new(t("...")).size(26.0));
                     }
                 }
             });
@@ -795,7 +809,7 @@ impl App {
             egui::Grid::new("verbindung").num_columns(2).spacing([28.0, 8.0]).show(ui, |ui| {
                 if let Verbindung::Verbunden(weg, name) = &self.verbindung {
                     hinweis(ui, "Weg");
-                    ui.label(if *weg == Weg::Usb { "USB-Kabel" } else { "Bluetooth" });
+                    ui.label(t(if *weg == Weg::Usb { "USB-Kabel" } else { "Bluetooth" }));
                     ui.end_row();
                     hinweis(ui, "Gerät");
                     ui.label(name);
@@ -803,19 +817,19 @@ impl App {
                 }
                 if let Some(i) = &info {
                     hinweis(ui, "Bluetooth LE");
-                    ui.label(if i.ble { "mit einem Gerät verbunden" } else { "nicht verbunden" });
+                    ui.label(t(if i.ble { "mit einem Gerät verbunden" } else { "nicht verbunden" }));
                     ui.end_row();
                     hinweis(ui, "Läuft seit");
                     ui.label(format!("{} min {} s", i.laufzeit_s / 60, i.laufzeit_s % 60));
                     ui.end_row();
                     hinweis(ui, "Letzter Neustart");
-                    ui.label(match i.reset.as_str() {
+                    ui.label(t(match i.reset.as_str() {
                         "0x01" => "Einschalten",
                         "0x04" => "Watchdog (Firmware hing)",
                         "0x40" => "Software (Update, Neustart, Moduswechsel)",
                         "0x10" => "Weckeingang",
                         r => r,
-                    });
+                    }));
                     ui.end_row();
                 }
             });
@@ -827,12 +841,12 @@ impl App {
             titel(ui, "Aktionen");
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button(format!("{}  Neu starten", icon::ARROWS_CLOCKWISE)).clicked() {
+                if ui.button(format!("{}  {}", icon::ARROWS_CLOCKWISE, t("Neu starten"))).clicked() {
                     self.senden(Zweck::Still, vec!["neustart".into()]);
                     self.spaeter_verbinden(6);
                     self.melden("Controller startet neu.", false);
                 }
-                if ui.button(format!("{}  Download-Modus", icon::DOWNLOAD_SIMPLE)).clicked() {
+                if ui.button(format!("{}  {}", icon::DOWNLOAD_SIMPLE, t("Download-Modus"))).clicked() {
                     self.frage_download = true;
                 }
             });
@@ -846,7 +860,7 @@ impl App {
                     .color(c.warnung),
                 );
                 ui.horizontal(|ui| {
-                    if ui.button("Abbrechen").clicked() {
+                    if ui.button(t("Abbrechen")).clicked() {
                         self.frage_download = false;
                     }
                     if knopf_haupt(ui, "Download-Modus starten").clicked() {
@@ -863,7 +877,7 @@ impl App {
             titel(ui, "Bedienung am Controller");
             ui.add_space(4.0);
             egui::Grid::new("bedienung").num_columns(2).spacing([28.0, 6.0]).show(ui, |ui| {
-                for (k, t) in [
+                for (k, was) in [
                     ("Licht kurz", "nächster Lichtmodus"),
                     ("Licht 3 s halten", "Tasten aufnehmen, dann Rück 1, Rück 2 oder M drücken"),
                     ("Licht + Taste", "Turbo dieser Taste: beim Halten, automatisch, aus"),
@@ -873,8 +887,8 @@ impl App {
                     ("Home + Minus 5 s", "Download-Modus zum Flashen"),
                     ("Schieber", "PC, Aus, Switch"),
                 ] {
-                    ui.label(RichText::new(k).strong());
-                    hinweis(ui, t);
+                    ui.label(RichText::new(t(k)).strong());
+                    hinweis(ui, was);
                     ui.end_row();
                 }
             });
@@ -891,12 +905,12 @@ impl App {
                 ui.add_space(4.0);
                 if gekoppelt {
                     ui.label(
-                        RichText::new(format!("{}  Als Pro Controller 2 gekoppelt: Home weckt die Switch 2", icon::CHECK_CIRCLE))
+                        RichText::new(format!("{}  {}", icon::CHECK_CIRCLE, t("Als Pro Controller 2 gekoppelt: Home weckt die Switch 2")))
                             .color(c.akzent),
                     );
                     hinweis(ui, "Mit der eigenen Adresse, ohne Joy-Con.");
                 } else {
-                    ui.label("Noch nicht mit einer Switch 2 gekoppelt.");
+                    ui.label(t("Noch nicht mit einer Switch 2 gekoppelt."));
                     hinweis(
                         ui,
                         "Schieber auf Switch, an der Switch 2 „Griff/Reihenfolge ändern“ öffnen: Sie koppelt von selbst (kein \
@@ -912,13 +926,13 @@ impl App {
             match &self.weck {
                 Some(Some(k)) => {
                     ui.label(
-                        RichText::new(format!("{}  Eingerichtet: Home am Controller weckt die Switch 2", icon::CHECK_CIRCLE))
+                        RichText::new(format!("{}  {}", icon::CHECK_CIRCLE, t("Eingerichtet: Home am Controller weckt die Switch 2")))
                             .color(c.akzent),
                     );
-                    hinweis(ui, &format!("Wecksignal mit der Kennung von {} {}", k.name(), k.adresse));
+                    hinweis(ui, &tr("Wecksignal mit der Kennung von {} {}", &[&t(k.name()), &k.adresse]));
                 }
                 Some(None) => {
-                    ui.label("Noch nicht eingerichtet.");
+                    ui.label(t("Noch nicht eingerichtet."));
                     hinweis(
                         ui,
                         "Die Switch 2 wacht nur bei Controllern auf, die sie selbst kennt. Der C2 Lite leiht sich dafür \
@@ -930,24 +944,24 @@ impl App {
             ui.add_space(6.0);
             if let Some((abbruch, seit)) = &self.weck_lauscht {
                 let rest = 90u64.saturating_sub(seit.elapsed().as_secs());
-                ui.label(RichText::new(format!(
-                    "{}  Lausche … ({rest} s). Switch 2 in den Standby schalten, einen Joy-Con 2 abnehmen und eine Taste \
+                ui.label(RichText::new(tr(
+                    "{}  Lausche … ({} s). Switch 2 in den Standby schalten, einen Joy-Con 2 abnehmen und eine Taste \
                      daran drücken. Die Switch wacht dabei auf, das ist normal.",
-                    icon::BROADCAST
+                    &[&icon::BROADCAST, &rest],
                 )));
-                if ui.button("Abbrechen").clicked() {
+                if ui.button(t("Abbrechen")).clicked() {
                     abbruch.store(true, Ordering::Relaxed);
                 }
                 ui.ctx().request_repaint_after(Duration::from_millis(500));
             } else {
                 ui.horizontal(|ui| {
                     let text = if matches!(self.weck, Some(Some(_))) { "Neu einrichten" } else { "Wecken einrichten" };
-                    if knopf_haupt(ui, &format!("{}  {text}", icon::BROADCAST)).clicked() {
+                    if knopf_haupt(ui, &format!("{}  {}", icon::BROADCAST, t(text))).clicked() {
                         let abbruch = Arc::new(AtomicBool::new(false));
                         let _ = self.tx.send(Auftrag::WeckenEinrichten(abbruch.clone()));
                         self.weck_lauscht = Some((abbruch, Instant::now()));
                     }
-                    if ui.button(format!("{}  Am Controller lernen", icon::GAME_CONTROLLER)).clicked() {
+                    if ui.button(format!("{}  {}", icon::GAME_CONTROLLER, t("Am Controller lernen"))).clicked() {
                         self.senden(Zweck::Still, vec!["switch weck lernen".into()]);
                         self.melden(
                             "Der Controller lauscht 30 s (Logo orange): Joy-Con 2 abnehmen und eine Taste daran drücken.",
@@ -955,7 +969,7 @@ impl App {
                         );
                         self.neu_laden_ab = Some(Instant::now() + Duration::from_secs(31));
                     }
-                    if matches!(self.weck, Some(Some(_))) && ui.button(format!("{}  Jetzt wecken", icon::SUN)).clicked() {
+                    if matches!(self.weck, Some(Some(_))) && ui.button(format!("{}  {}", icon::SUN, t("Jetzt wecken"))).clicked() {
                         self.senden(Zweck::Still, vec!["switch weck".into()]);
                         self.melden("Wecksignal gesendet (2 s).", false);
                     }
@@ -972,19 +986,19 @@ impl App {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let n = ROLLEN.iter().filter(|(_, b)| self.getestet & (1u64 << b) != 0).count();
-                ui.label(RichText::new(format!("{n} von {} Tasten getestet", ROLLEN.len())).strong());
+                ui.label(RichText::new(tr("{} von {} Tasten getestet", &[&n, &ROLLEN.len()])).strong());
                 if n == ROLLEN.len() {
-                    ui.label(RichText::new(format!("{}  alle in Ordnung", icon::CHECK_CIRCLE)).color(c.akzent));
+                    ui.label(RichText::new(format!("{}  {}", icon::CHECK_CIRCLE, t("alle in Ordnung"))).color(c.akzent));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Zurücksetzen").clicked() {
+                    if ui.button(t("Zurücksetzen")).clicked() {
                         self.getestet = 0;
                     }
                     if let Some(s) = &self.status {
                         ui.label(
                             RichText::new(format!(
-                                "links {:4} {:4}   rechts {:4} {:4}",
-                                s.achsen[0], s.achsen[1], s.achsen[2], s.achsen[3]
+                                "{} {:4} {:4}   {} {:4} {:4}",
+                                t("links"), s.achsen[0], s.achsen[1], t("rechts"), s.achsen[2], s.achsen[3]
                             ))
                             .monospace()
                             .color(c.schwach),
@@ -1004,10 +1018,10 @@ impl App {
                             self.senden(Zweck::Still, vec![format!("led {}", crate::spieler_bit(n))]);
                         }
                     }
-                    if ui.button("Alle").clicked() {
+                    if ui.button(t("Alle")).clicked() {
                         self.senden(Zweck::Still, vec!["led 60".into()]);
                     }
-                    if ui.button("Automatisch").clicked() {
+                    if ui.button(t("Automatisch")).clicked() {
                         self.senden(Zweck::Still, vec!["led auto".into()]);
                     }
                 });
@@ -1017,7 +1031,7 @@ impl App {
                 hinweis(ui, "Kurzer Stoß, links, rechts oder beide Motoren.");
                 ui.horizontal_wrapped(|ui| {
                     for (name, l, r) in [("Links", 70, 0), ("Rechts", 0, 70), ("Beide", 70, 70)] {
-                        if ui.button(format!("{}  {name}", icon::VIBRATE)).clicked() {
+                        if ui.button(format!("{}  {}", icon::VIBRATE, t(name))).clicked() {
                             self.senden(Zweck::Still, vec![format!("motor {l} {r} 400")]);
                         }
                     }
@@ -1044,7 +1058,7 @@ impl App {
         };
         ui.horizontal(|ui| {
             for (i, (_, name)) in PLAETZE.iter().enumerate() {
-                if ui.add(stil::wahl(self.platz == i, *name).min_size(Vec2::new(150.0, 34.0))).clicked() {
+                if ui.add(stil::wahl(self.platz == i, name).min_size(Vec2::new(150.0, 34.0))).clicked() {
                     self.platz = i;
                 }
             }
@@ -1086,7 +1100,7 @@ impl App {
                     if knopf_haupt(ui, "Speichern").clicked() {
                         speichern = true;
                     }
-                    if ui.button("Verwerfen").clicked() {
+                    if ui.button(t("Verwerfen")).clicked() {
                         verwerfen = true;
                     }
                 });
@@ -1111,7 +1125,7 @@ impl App {
             hinweis(ui, "Beim Halten: feuert, solange die Taste gedrückt ist. Automatisch: ein Druck startet, der nächste stoppt.");
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.label("Tempo");
+                ui.label(t("Tempo"));
                 for (t, text) in [(0u8, "5 Hz"), (1, "8 Hz"), (2, "12 Hz")] {
                     if ui.add(stil::wahl(beleg.turbo_tempo == t, text)).clicked() && beleg.turbo_tempo != t {
                         self.senden(Zweck::Belegung, vec![format!("turbo tempo {t}"), "belegung".into()]);
@@ -1127,7 +1141,7 @@ impl App {
             }
             egui::Grid::new("turbo").num_columns(4).spacing([16.0, 6.0]).show(ui, |ui| {
                 for (k, (taste, name)) in liste.iter().enumerate() {
-                    ui.add_sized([96.0, 30.0], egui::Label::new(RichText::new(*name).strong()));
+                    ui.add_sized([96.0, 30.0], egui::Label::new(RichText::new(t(name)).strong()));
                     let jetzt = beleg.turbo_von(taste);
                     ui.horizontal(|ui| {
                         for (m, text) in [(0u8, "Aus"), (1, "Halten"), (2, "Auto")] {
@@ -1147,12 +1161,12 @@ impl App {
             titel(ui, "Werkszustand");
             hinweis(ui, "Rück 1 = B, Rück 2 = A, M = Makro wie bei Mobapad, kein Turbo.");
             if !self.frage_werkszustand {
-                if ui.button("Auf Werkszustand setzen").clicked() {
+                if ui.button(t("Auf Werkszustand setzen")).clicked() {
                     self.frage_werkszustand = true;
                 }
             } else {
                 ui.horizontal(|ui| {
-                    if ui.button("Abbrechen").clicked() {
+                    if ui.button(t("Abbrechen")).clicked() {
                         self.frage_werkszustand = false;
                     }
                     if knopf_haupt(ui, "Ja, zurücksetzen").clicked() {
@@ -1174,7 +1188,7 @@ impl App {
             titel(ui, "Lichtmodus");
             ui.horizontal_wrapped(|ui| {
                 for (m, name) in LICHTMODI {
-                    if ui.add(stil::wahl(e.licht == *m, *name).min_size(Vec2::new(116.0, 34.0))).clicked() {
+                    if ui.add(stil::wahl(e.licht == *m, name).min_size(Vec2::new(116.0, 34.0))).clicked() {
                         e.licht = *m;
                     }
                 }
@@ -1182,7 +1196,7 @@ impl App {
             if e.licht == 0 || e.licht == 1 {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    ui.label("Farbe");
+                    ui.label(t("Farbe"));
                     ui.color_edit_button_srgb(&mut e.farbe);
                     for f in [[255, 255, 255], [255, 40, 40], [255, 120, 0], [255, 200, 0], [40, 220, 90], [0, 200, 255], [40, 80, 255], [255, 0, 160]] {
                         let (rect, a) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
@@ -1198,13 +1212,13 @@ impl App {
             }
             ui.add_space(8.0);
             egui::Grid::new("licht").num_columns(2).spacing([24.0, 10.0]).show(ui, |ui| {
-                ui.label("Streifen und Seiten");
+                ui.label(t("Streifen und Seiten"));
                 stil::regler(ui, &mut e.hell, 0..=100, " %");
                 ui.end_row();
-                ui.label("Logo (Statusanzeige)");
+                ui.label(t("Logo (Statusanzeige)"));
                 stil::regler(ui, &mut e.logo, 0..=100, " %");
                 ui.end_row();
-                ui.label("Tempo der Effekte");
+                ui.label(t("Tempo der Effekte"));
                 stil::regler(ui, &mut e.tempo, 1..=100, "");
                 ui.end_row();
             });
@@ -1213,19 +1227,19 @@ impl App {
         karte(ui, |ui| {
             titel(ui, "Vibration und Sticks");
             egui::Grid::new("vib").num_columns(2).spacing([24.0, 10.0]).show(ui, |ui| {
-                ui.label("Vibrationsstärke");
+                ui.label(t("Vibrationsstärke"));
                 ui.horizontal(|ui| {
                     stil::regler(ui, &mut e.vibration, 0..=100, " %");
-                    if ui.button(format!("{}  Testen", icon::VIBRATE)).clicked() {
+                    if ui.button(format!("{}  {}", icon::VIBRATE, t("Testen"))).clicked() {
                         let v = e.vibration;
                         self.senden(Zweck::Still, vec![format!("motor {v} {v} 400")]);
                     }
                 });
                 ui.end_row();
-                ui.label("Stick-Totzone");
+                ui.label(t("Stick-Totzone"));
                 stil::regler(ui, &mut e.totzone, 0..=100, "");
                 ui.end_row();
-                ui.label("Spieler-LEDs");
+                ui.label(t("Spieler-LEDs"));
                 ui.horizontal(|ui| {
                     for (an, text) in [(true, "An"), (false, "Aus")] {
                         if ui.add(stil::wahl(e.anzeige == an, text).min_size(Vec2::new(64.0, 30.0))).clicked() {
@@ -1250,14 +1264,14 @@ impl App {
         let im_programm = crate::paket::stufe();
         karte(ui, |ui| {
             egui::Grid::new("staende").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
-                ui.label(RichText::new("Auf dem Controller").color(c.schwach));
+                ui.label(RichText::new(t("Auf dem Controller")).color(c.schwach));
                 match &installiert {
-                    Some(s) => ui.label(RichText::new(format!("Stufe {s}")).strong()),
+                    Some(s) => ui.label(RichText::new(tr("Stufe {}", &[s])).strong()),
                     None => ui.spinner(),
                 };
                 ui.end_row();
-                ui.label(RichText::new("Im Programm").color(c.schwach));
-                ui.label(RichText::new(format!("Stufe {im_programm}")).strong());
+                ui.label(RichText::new(t("Im Programm")).color(c.schwach));
+                ui.label(RichText::new(tr("Stufe {}", &[&im_programm])).strong());
                 ui.end_row();
             });
             ui.add_space(10.0);
@@ -1265,31 +1279,31 @@ impl App {
             let laeuft = self.update_fortschritt.is_some();
             if let Some(a) = self.update_fortschritt {
                 ui.add(egui::ProgressBar::new(a).show_percentage().fill(c.akzent));
-                ui.label(RichText::new("Nicht trennen, solange das Update läuft.").color(c.warnung));
+                ui.label(RichText::new(t("Nicht trennen, solange das Update läuft.")).color(c.warnung));
             } else if let Some((p, d)) = self.update_datei.clone() {
                 // Eigene Datei gewählt
                 ui.horizontal(|ui| {
-                    ui.label(format!("Datei: {}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
-                    if ui.small_button("Eingebaute nehmen").clicked() {
+                    ui.label(tr("Datei: {}", &[&p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()]));
+                    if ui.small_button(t("Eingebaute nehmen")).clicked() {
                         self.update_datei = None;
                     }
                 });
                 ui.add_space(6.0);
-                if knopf_haupt(ui, &format!("{}  Update einspielen", icon::DOWNLOAD_SIMPLE)).clicked() {
+                if knopf_haupt(ui, &format!("{}  {}", icon::DOWNLOAD_SIMPLE, t("Update einspielen"))).clicked() {
                     self.update_fortschritt = Some(0.0);
                     let _ = self.tx.send(Auftrag::Update(d));
                 }
             } else {
                 match installiert.as_deref().map(|s| crate::paket::stufe_vergleich(s, im_programm)) {
                     Some(std::cmp::Ordering::Equal) => {
-                        ui.label(RichText::new(format!("{}  Aktuell", icon::CHECK_CIRCLE)).color(c.akzent).size(16.0));
+                        ui.label(RichText::new(format!("{}  {}", icon::CHECK_CIRCLE, t("Aktuell"))).color(c.akzent).size(16.0));
                     }
                     // Controller neuer als das Programm: kein Knopf, sonst würde man versehentlich zurückstufen
                     Some(std::cmp::Ordering::Greater) => {
-                        ui.label(RichText::new(format!("{}  Neuer als im Programm", icon::CHECK_CIRCLE)).color(c.akzent).size(16.0));
+                        ui.label(RichText::new(format!("{}  {}", icon::CHECK_CIRCLE, t("Neuer als im Programm"))).color(c.akzent).size(16.0));
                     }
                     Some(std::cmp::Ordering::Less) => {
-                        if knopf_haupt(ui, &format!("{}  Auf Stufe {im_programm} aktualisieren", icon::DOWNLOAD_SIMPLE)).clicked() {
+                        if knopf_haupt(ui, &tr("{}  Auf Stufe {} aktualisieren", &[&icon::DOWNLOAD_SIMPLE, &im_programm])).clicked() {
                             self.update_fortschritt = Some(0.0);
                             let _ = self.tx.send(Auftrag::Update(crate::paket::UPDATE.to_vec()));
                         }
@@ -1300,8 +1314,8 @@ impl App {
             ui.add_space(8.0);
             ui.add_enabled_ui(!laeuft, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.small_button("Andere Datei …").on_hover_text("db_update_data.bin, z. B. selbst gebaut").clicked() {
-                        if let Some(p) = rfd::FileDialog::new().add_filter("Firmware-Update", &["bin"]).pick_file() {
+                    if ui.small_button(t("Andere Datei …")).on_hover_text(t("db_update_data.bin, z. B. selbst gebaut")).clicked() {
+                        if let Some(p) = rfd::FileDialog::new().add_filter(t("Firmware-Update"), &["bin"]).pick_file() {
                             match std::fs::read(&p) {
                                 Ok(d) if !d.is_empty() => self.update_datei = Some((p, d)),
                                 Ok(_) => self.melden("Die Datei ist leer", true),
@@ -1333,7 +1347,7 @@ impl App {
                         ("Bluetooth-Mitschnitt", "btlog"),
                         ("Hilfe", "hilfe"),
                     ] {
-                        if ui.button(text).clicked() {
+                        if ui.button(t(text)).clicked() {
                             self.diag_ausgabe.push(format!("> {befehl}"));
                             self.senden(Zweck::Diagnose, vec![befehl.into()]);
                         }
@@ -1342,13 +1356,13 @@ impl App {
                 ui.horizontal(|ui| {
                     let feld = ui.add(
                         egui::TextEdit::singleline(&mut self.diag_eingabe)
-                            .hint_text("Befehl, z. B. status")
+                            .hint_text(t("Befehl, z. B. status"))
                             .font(egui::TextStyle::Monospace)
                             .margin(Margin::symmetric(10, 8))
                             .desired_width(ui.available_width() - 110.0),
                     );
                     let enter = feld.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if (ui.button("Senden").clicked() || enter) && !self.diag_eingabe.trim().is_empty() {
+                    if (ui.button(t("Senden")).clicked() || enter) && !self.diag_eingabe.trim().is_empty() {
                         let b = self.diag_eingabe.trim().to_string();
                         self.diag_ausgabe.push(format!("> {b}"));
                         self.senden(Zweck::Diagnose, vec![b]);
@@ -1366,10 +1380,10 @@ impl App {
             ui.horizontal(|ui| {
                 titel(ui, "Ausgabe");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Leeren").clicked() {
+                    if ui.button(t("Leeren")).clicked() {
                         self.diag_ausgabe.clear();
                     }
-                    if ui.button(format!("{}  Kopieren", icon::COPY)).clicked() {
+                    if ui.button(format!("{}  {}", icon::COPY, t("Kopieren"))).clicked() {
                         ui.ctx().copy_text(self.diag_ausgabe.join("\n"));
                         self.melden("In die Zwischenablage kopiert.", false);
                     }
@@ -1403,7 +1417,7 @@ impl App {
                 titel(ui, "Sichern");
                 hinweis(ui, "Liest die aktuellen Einstellungen aus dem Controller und speichert sie als Datei.");
                 ui.add_space(6.0);
-                if knopf_haupt(ui, &format!("{}  Backup speichern", icon::FLOPPY_DISK)).clicked() {
+                if knopf_haupt(ui, &format!("{}  {}", icon::FLOPPY_DISK, t("Backup speichern"))).clicked() {
                     self.senden(Zweck::Backup, vec!["einstellungen".into(), "belegung".into()]);
                 }
             });
@@ -1411,7 +1425,7 @@ impl App {
                 titel(ui, "Wiederherstellen");
                 hinweis(ui, "Spielt eine Backup-Datei ein. Die aktuellen Einstellungen werden überschrieben.");
                 ui.add_space(6.0);
-                if ui.button(format!("{}  Backup laden", icon::UPLOAD_SIMPLE)).clicked() {
+                if ui.button(format!("{}  {}", icon::UPLOAD_SIMPLE, t("Backup laden"))).clicked() {
                     self.backup_laden();
                 }
             });
@@ -1422,11 +1436,11 @@ impl App {
 /// Mehrfachauswahl von Tasten als Schaltflächen
 fn tasten_auswahl(ui: &mut egui::Ui, gewaehlt: &mut Vec<String>, c: stil::Farben) {
     for (gruppe, liste) in [("Tasten", TASTEN), ("Stick-Richtungen", RICHTUNGEN)] {
-        ui.label(RichText::new(gruppe).small().color(c.schwach));
+        ui.label(RichText::new(t(gruppe)).small().color(c.schwach));
         ui.horizontal_wrapped(|ui| {
             for (name, anzeige) in liste {
                 let an = gewaehlt.iter().any(|t| t == name);
-                if ui.add(stil::wahl(an, *anzeige).min_size(Vec2::new(52.0, 30.0))).clicked() {
+                if ui.add(stil::wahl(an, anzeige).min_size(Vec2::new(52.0, 30.0))).clicked() {
                     if an {
                         gewaehlt.retain(|t| t != name);
                     } else {
@@ -1454,7 +1468,7 @@ fn makro_editor(ui: &mut egui::Ui, p: &mut Platz, c: stil::Farben) {
         for (k, s) in p.schritte.iter_mut().enumerate() {
             ui.label(RichText::new(format!("{}", k + 1)).color(c.schwach));
             let text = if s.tasten.is_empty() {
-                "keine".to_string()
+                t("keine").to_string()
             } else {
                 s.tasten.iter().map(|t| anzeigename(t)).collect::<Vec<_>>().join(" + ")
             };
@@ -1465,13 +1479,13 @@ fn makro_editor(ui: &mut egui::Ui, p: &mut Platz, c: stil::Farben) {
             ui.add(egui::DragValue::new(&mut s.halten).range(10..=30000).suffix(" ms").speed(5));
             ui.add(egui::DragValue::new(&mut s.pause).range(0..=30000).suffix(" ms").speed(5));
             ui.horizontal(|ui| {
-                if ui.add_enabled(k > 0, egui::Button::new(icon::ARROW_UP)).on_hover_text("nach oben").clicked() {
+                if ui.add_enabled(k > 0, egui::Button::new(icon::ARROW_UP)).on_hover_text(t("nach oben")).clicked() {
                     hoch = Some(k);
                 }
-                if ui.add_enabled(k + 1 < n, egui::Button::new(icon::ARROW_DOWN)).on_hover_text("nach unten").clicked() {
+                if ui.add_enabled(k + 1 < n, egui::Button::new(icon::ARROW_DOWN)).on_hover_text(t("nach unten")).clicked() {
                     hoch = Some(k + 1);
                 }
-                if ui.button(icon::TRASH).on_hover_text("entfernen").clicked() {
+                if ui.button(icon::TRASH).on_hover_text(t("entfernen")).clicked() {
                     weg = Some(k);
                 }
             });
@@ -1485,14 +1499,14 @@ fn makro_editor(ui: &mut egui::Ui, p: &mut Platz, c: stil::Farben) {
         p.schritte.remove(k);
     }
     ui.horizontal(|ui| {
-        if ui.add_enabled(p.schritte.len() < MAX_SCHRITTE, egui::Button::new(format!("{}  Schritt", icon::PLUS))).clicked() {
+        if ui.add_enabled(p.schritte.len() < MAX_SCHRITTE, egui::Button::new(format!("{}  {}", icon::PLUS, t("Schritt")))).clicked() {
             p.schritte.push(Schritt::default());
         }
-        hinweis(ui, &format!("{} von {MAX_SCHRITTE}", p.schritte.len()));
+        hinweis(ui, &tr("{} von {}", &[&p.schritte.len(), &MAX_SCHRITTE]));
     });
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label("Ablauf");
+        ui.label(t("Ablauf"));
         for (w, text) in [("einmal", "einmal pro Druck"), ("endlos", "endlos, Druck startet/stoppt"), ("halten", "solange gehalten")] {
             if ui.add(stil::wahl(p.wiederholen == w, text)).clicked() {
                 p.wiederholen = w.to_string();
@@ -1501,7 +1515,7 @@ fn makro_editor(ui: &mut egui::Ui, p: &mut Platz, c: stil::Farben) {
     });
     if p.wiederholen != "einmal" {
         ui.horizontal(|ui| {
-            ui.label("Pause zwischen Durchläufen");
+            ui.label(t("Pause zwischen Durchläufen"));
             ui.add(egui::DragValue::new(&mut p.intervall).range(0..=30000).suffix(" ms").speed(10));
         });
     }

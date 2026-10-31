@@ -195,7 +195,7 @@ fn verbinden(weg: Weg) -> Result<Box<dyn Kanal>, String> {
             )?;
             Ok(Box::new(Geraet::oeffnen(&pfad).map_err(|e| {
                 if cfg!(target_os = "linux") {
-                    format!("{e}. Tipp: Benutzer in die Gruppe dialout aufnehmen und neu anmelden.")
+                    crate::sprache::tr("{}. Tipp: Benutzer in die Gruppe dialout aufnehmen und neu anmelden.", &[&e])
                 } else {
                     e
                 }

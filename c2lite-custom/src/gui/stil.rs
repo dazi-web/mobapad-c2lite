@@ -127,8 +127,8 @@ fn visuals(c: Farben, dunkel: bool) -> egui::Visuals {
 }
 
 /// Auswahl-Schaltfläche (Segmente, Chips): immer mit Rahmen, ausgewählt in Akzentfarbe
-pub fn wahl<'a>(an: bool, text: impl egui::IntoAtoms<'a>) -> egui::Button<'a> {
-    egui::Button::new(text).selected(an).frame_when_inactive(true)
+pub fn wahl(an: bool, text: &str) -> egui::Button<'_> {
+    egui::Button::new(crate::sprache::t(text)).selected(an).frame_when_inactive(true)
 }
 
 /// Schieberegler mit voller Akzentfarbe auf der gefüllten Strecke (die Auswahlfarbe ist bewusst dezent)
@@ -144,7 +144,7 @@ pub fn regler<N: egui::emath::Numeric>(ui: &mut egui::Ui, wert: &mut N, bereich:
 /// Hauptschaltfläche (Akzent)
 pub fn knopf_haupt(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let c = farben(ui.ctx());
-    ui.add(egui::Button::new(egui::RichText::new(text).color(c.akzent_text)).fill(c.akzent).corner_radius(RADIUS))
+    ui.add(egui::Button::new(egui::RichText::new(crate::sprache::t(text)).color(c.akzent_text)).fill(c.akzent).corner_radius(RADIUS))
 }
 
 /// Karte: Fläche mit Rand, für zusammengehörige Einstellungen
@@ -163,9 +163,9 @@ pub fn karte<R>(ui: &mut egui::Ui, inhalt: impl FnOnce(&mut egui::Ui) -> R) -> R
 }
 
 pub fn titel(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).font(FontId::new(17.0, FontFamily::Name(FETT.into()))));
+    ui.label(egui::RichText::new(crate::sprache::t(text)).font(FontId::new(17.0, FontFamily::Name(FETT.into()))));
 }
 
 pub fn hinweis(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).color(farben(ui.ctx()).schwach));
+    ui.label(egui::RichText::new(crate::sprache::t(text)).color(farben(ui.ctx()).schwach));
 }

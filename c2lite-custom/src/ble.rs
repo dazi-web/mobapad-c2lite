@@ -41,7 +41,7 @@ async fn suchen(adresse: Option<&str>) -> Result<(Peripheral, String), String> {
         .map_err(|e| format!("Bluetooth: {e}"))?
         .into_iter()
         .next()
-        .ok_or("kein Bluetooth-Adapter gefunden")?;
+        .ok_or(crate::sprache::t("kein Bluetooth-Adapter gefunden"))?;
     let passt = |name: &Option<String>, adr: &str| -> bool {
         match adresse {
             Some(a) => adr.eq_ignore_ascii_case(a),
@@ -64,7 +64,7 @@ async fn suchen(adresse: Option<&str>) -> Result<(Peripheral, String), String> {
         }
         if Instant::now() > ende {
             let _ = adapter.stop_scan().await;
-            return Err("Controller per Bluetooth nicht gefunden (an, in Reichweite, gekoppelt?)".into());
+            return Err(crate::sprache::t("Controller per Bluetooth nicht gefunden (an, in Reichweite, gekoppelt?)").into());
         }
         let _ = tokio::time::timeout(Duration::from_millis(500), async {
             while let Some(e) = events.next().await {
@@ -130,7 +130,7 @@ impl Kanal for BleGeraet {
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            Err(format!("keine Antwort auf „{befehl}“ über Bluetooth"))
+            Err(crate::sprache::tr("keine Antwort auf „{}“ über Bluetooth", &[&befehl]))
         })
     }
 

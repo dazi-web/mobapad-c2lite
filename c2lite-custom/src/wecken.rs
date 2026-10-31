@@ -78,7 +78,7 @@ async fn lauschen(dauer: Duration, abbruch: &AtomicBool) -> Result<Kennung, Stri
         .map_err(|e| format!("Bluetooth: {e}"))?
         .into_iter()
         .next()
-        .ok_or("kein Bluetooth-Adapter gefunden")?;
+        .ok_or(crate::sprache::t("kein Bluetooth-Adapter gefunden"))?;
     let mut events = adapter.events().await.map_err(|e| e.to_string())?;
     adapter.start_scan(ScanFilter::default()).await.map_err(|e| format!("Suche: {e}"))?;
     let ende = Instant::now() + dauer;
@@ -87,7 +87,7 @@ async fn lauschen(dauer: Duration, abbruch: &AtomicBool) -> Result<Kennung, Stri
             break Err("abgebrochen".to_string());
         }
         if Instant::now() > ende {
-            break Err("kein Wecksignal empfangen (Switch im Standby? Joy-Con abgenommen und Taste gedrückt?)".into());
+            break Err(crate::sprache::t("kein Wecksignal empfangen (Switch im Standby? Joy-Con abgenommen und Taste gedrückt?)").into());
         }
         // Meldungen der Suche; daneben die Geräte, die in dieser Suche gesehen wurden (RSSI gesetzt), falls BlueZ
         // gleiche Daten nicht noch einmal meldet
