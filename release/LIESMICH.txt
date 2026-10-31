@@ -1,4 +1,4 @@
-C2 Lite Custom, Stufe 13a (Firmware für den Mobapad C2 Lite)
+C2 Lite Custom, Stufe 13b (Firmware für den Mobapad C2 Lite)
 
 jl_isd.bin          Erstinstallation von der Werks-Firmware: c2lite-custom, Seite „Installieren“
                     (oder: c2lite-custom installieren release/jl_isd.bin)

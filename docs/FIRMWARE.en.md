@@ -3,7 +3,7 @@
 A small easter egg: on the device it shows up as "C2 Lite dazi edition" (USB) or "C2 Lite dazi" (Bluetooth).
 
 Free replacement firmware for the Mobapad C2 Lite (Jieli AC635N/AC695N, BR23 family), built from the open Jieli
-SDK. Status 2026-10-31: stage 13a. Prebuilt firmware: `release/`. German version of this document:
+SDK. Status 2026-10-31: stage 13b. Prebuilt firmware: `release/`. German version of this document:
 `FIRMWARE.md`.
 
 > **At your own risk.** Only use on hardware you own. Always back up the whole flash before the first write (see
@@ -228,6 +228,9 @@ Reset source (P3_RST_SRC, from `cpu.a`/`power_hw.c`): 0x01 VDDIO POR, 0x02 VDDIO
 - USB serial: do not re-initialise endpoints when the port is opened/closed (data toggle), block sending while
   DTR is 0 (otherwise the firmware blocks until the watchdog fires). See `cdc.c` (C2 Lite).
 - No long loops at startup: otherwise the watchdog (4 s) restarts in a loop (stage 2w).
+- Only send the USB gamepad report when the previous one was collected: otherwise the library's `usb_g_intr_write`
+  busy-waits up to 20 ms while no program reads the gamepad. With a moving stick (sending every 10 ms) this starved the
+  watchdog, restart after ~3.5 s (stage 13a, fixed in 13b: `c2_ep_tx_belegt` in `hid.c` checks TXCSR first).
 - **System clock at least 48 MHz** while USB is active. At 24 MHz (as in the factory firmware) the chip silently
   restarts when Bluetooth connects (SOFT RESET, no crash report). Only hinted at in the community register docs
   (`USB_CON0.LOWP_MD`), not in the SDK.

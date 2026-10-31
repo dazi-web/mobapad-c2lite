@@ -293,7 +293,7 @@ index 1df4c20..8c3f94d 100644
  }
  
 diff --git a/apps/common/device/usb/device/hid.c b/apps/common/device/usb/device/hid.c
-index 5ff75b0..fe49d9a 100644
+index 5ff75b0..a5c16ca 100644
 --- a/apps/common/device/usb/device/hid.c
 +++ b/apps/common/device/usb/device/hid.c
 @@ -20,6 +20,17 @@
@@ -367,7 +367,7 @@ index 5ff75b0..fe49d9a 100644
  
  static u32 get_hid_report_desc_len(u32 index)
  {
-@@ -110,6 +159,19 @@ static void *get_hid_report_desc(u32 index)
+@@ -110,6 +159,61 @@ static void *get_hid_report_desc(u32 index)
  
  
  static u8 *hid_ep_in_dma;
@@ -375,10 +375,52 @@ index 5ff75b0..fe49d9a 100644
 +static u8 *hid_ep_out_dma;
 +static volatile u8 hid_bereit; /* Endpunkt konfiguriert (SET_CONFIGURATION), erst dann senden */
 +
-+/* Gamepad-Report senden; 0 = nicht gesendet (USB nicht bereit oder vorheriger Report noch unterwegs) */
++/* Liegt der vorige Bericht noch im Endpunkt, weil der Host ihn nicht abgeholt hat (Linux xpad fragt nur ab, solange
++ * ein Programm das Gamepad offen hat)? usb_g_ep_write der Bibliothek wartet dann aktiv bis zu 2 Systemticks
++ * (Disassembly: Schleife über TXCSR & 0x4001 == 1 mit Timeout jiffies + 1 + len/64). Bei Stickbewegung wird jede
++ * Runde (10 ms) gesendet, die Wartezeit fraß die ganze Rechenzeit, und der Watchdog (4 s) startete neu (Stufe 13b,
++ * gemessen: 12 ms je Sendeversuch). Gelesen wird TXCSR wie in musb_read_usb der Bibliothek: Index (Register 14)
++ * setzen, Register 17 über JL_USB->CON1 indirekt lesen. */
++static u32 c2_usb_reg_lesen(u32 reg)
++{
++    if (!(JL_USB->CON0 & BIT(2))) {
++        return 0; /* USB aus: wie die Bibliothek 0 */
++    }
++    JL_USB->CON1 = ((reg << 8) & 0xBF00) | BIT(14);
++    for (u32 i = 0; i < 20000; i++) {
++        if (JL_USB->CON1 & BIT(15)) {
++            return JL_USB->CON1 & 0xFF;
++        }
++    }
++    return 0;
++}
++
++static void c2_usb_reg_schreiben(u32 reg, u32 wert)
++{
++    if (!(JL_USB->CON0 & BIT(2))) {
++        return;
++    }
++    JL_USB->CON1 = ((reg << 8) & 0xFFFF) | (wert & 0xFF);
++    for (u32 i = 0; i < 20000; i++) {
++        if (JL_USB->CON1 & BIT(15)) {
++            return;
++        }
++    }
++}
++
++static int c2_ep_tx_belegt(u32 ep)
++{
++    local_irq_disable();
++    c2_usb_reg_schreiben(14, ep); /* Index */
++    u32 csr = c2_usb_reg_lesen(17) | c2_usb_reg_lesen(18) << 8;
++    local_irq_enable();
++    return (csr & 0x4001) == 1;
++}
++
++/* Gamepad-Report senden; 0 = nicht gesendet (USB nicht bereit oder vorheriger Report noch nicht abgeholt) */
 +u32 c2_hid_senden(const u8 *report, u32 len)
 +{
-+    if (!hid_bereit || usb_get_ep_status(0, HID_EP_IN)) {
++    if (!hid_bereit || usb_get_ep_status(0, HID_EP_IN) || c2_ep_tx_belegt(HID_EP_IN)) {
 +        return 0;
 +    }
 +    return usb_g_intr_write(0, HID_EP_IN, report, len);
@@ -387,7 +429,7 @@ index 5ff75b0..fe49d9a 100644
  /* static u8 *hid_ep_out_dma; */
  
  static u32 hid_tx_data(struct usb_device_t *usb_device, const u8 *buffer, u32 len)
-@@ -124,18 +186,43 @@ static void hid_rx_data(struct usb_device_t *usb_device, u32 ep)
+@@ -124,18 +228,43 @@ static void hid_rx_data(struct usb_device_t *usb_device, u32 ep)
      /* hid_tx_data(usb_device, hid_ep_out_dma, rx_len); */
  }
  
@@ -431,7 +473,7 @@ index 5ff75b0..fe49d9a 100644
  
      /* hid_ep_out_dma = hid_ep_in_dma + MAXP_SIZE_HIDIN; */
      return 0;
-@@ -275,8 +362,10 @@ u32 hid_desc_config(const usb_dev usb_id, u8 *ptr, u32 *cur_itf_num)
+@@ -275,8 +404,10 @@ u32 hid_desc_config(const usb_dev usb_id, u8 *ptr, u32 *cur_itf_num)
          ASSERT(0, "hid set interface_reset_hander fail");
      }
  
@@ -4314,10 +4356,10 @@ index 0000000..bad24a6
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_eingaben.c b/apps/hid/modules/c2lite/c2_eingaben.c
 new file mode 100644
-index 0000000..689523a
+index 0000000..19afbf6
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_eingaben.c
-@@ -0,0 +1,897 @@
+@@ -0,0 +1,959 @@
 +/* C2 Lite: Eingaben lesen, als HID-Gamepad über USB senden und über das USB-Protokoll (c2_log) melden.
 + * Keine LED, kein Motor, kein Laden (kommt in späteren Stufen).
 + * Pin-Karte und Abfrage-Ablauf aus der Werks-Firmware, am Gerät bestätigt:
@@ -4338,6 +4380,40 @@ index 0000000..689523a
 +#include "c2_switch.h"
 +#include "c2_belegung.h"
 +#include "asm/usb.h"
++#include "generic/jiffies.h"
++
++/* Messung (Stufe 13b, Watchdog bei Stickbewegung): Dauer der Abschnitte einer Abfrage-Runde und Abstand zwischen zwei
++ * Runden in µs, einmal pro Sekunde ins Protokoll (landet im Nachlass, übersteht den Watchdog-Neustart) */
++#define C2_MESSEN 0
++#if C2_MESSEN
++static u32 jetzt_us(void)
++{
++    u32 j1, c, j2;
++    do {
++        j1 = jiffies;
++        c = TICK_CNT;
++        j2 = jiffies;
++    } while (j1 != j2);
++    u32 prd = TICK_PRD ? TICK_PRD : 1;
++    return j1 * 10000 + (u32)((u64)c * 10000 / prd);
++}
++#define MESS_TEILE 10
++static u32 mess_summe[MESS_TEILE], mess_max[MESS_TEILE], mess_abstand_max, mess_runden, mess_letzter_start;
++static u32 mess_t;
++static void mess_marke(int teil)
++{
++    u32 t = jetzt_us();
++    u32 d = t - mess_t;
++    mess_summe[teil] += d;
++    if (d > mess_max[teil]) {
++        mess_max[teil] = d;
++    }
++    mess_t = t;
++}
++#define MESS(teil) mess_marke(teil)
++#else
++#define MESS(teil)
++#endif
 +
 +#ifdef CONFIG_BOARD_C2LITE
 +
@@ -5003,6 +5079,13 @@ index 0000000..689523a
 +
 +static void abfrage(void *priv)
 +{
++#if C2_MESSEN
++    mess_t = jetzt_us();
++    if (mess_letzter_start && mess_t - mess_letzter_start > mess_abstand_max) {
++        mess_abstand_max = mess_t - mess_letzter_start;
++    }
++    mess_letzter_start = mess_t;
++#endif
 +    gpio_direction_output(IO_PORTA_07, 0); /* LED-Versorgung aus, bevor die Pins gelesen werden */
 +    gpio_direction_output(IO_PORTA_08, 1);
 +    u64 r = phase_lesen(PHASE_A, ARRAY_SIZE(PHASE_A), 1);
@@ -5010,6 +5093,7 @@ index 0000000..689523a
 +    r |= phase_lesen(PHASE_B, ARRAY_SIZE(PHASE_B), 0);
 +    r |= phase_lesen(DIREKT, ARRAY_SIZE(DIREKT), 0);
 +    c2_rgb_senden(); /* PA7 und PA8 sind hier low (siehe c2_rgb.c) */
++    MESS(0); /* Tasten lesen + Licht senden */
 +    /* Neu gedrückte Tasten (für Reaktiv-Licht, Ruhezeit und die Licht-Taste) */
 +    u64 neu = r & ~alt_rollen;
 +    u8 gruppe = 0;
@@ -5059,6 +5143,7 @@ index 0000000..689523a
 +    if (runde % (500 / TAKT_MS) == 0) {
 +        akku_messen();
 +    }
++    MESS(1); /* Anzeige, LEDs, Motor, Ruhe */
 +
 +    u64 diff = r ^ alt_rollen;
 +    for (int i = 0; i < ROLLEN; i++) {
@@ -5087,6 +5172,7 @@ index 0000000..689523a
 +    u16 aus_achse[N_STICK];
 +    memcpy(aus_achse, status_achse, sizeof(aus_achse));
 +    u64 aus = c2_belegung_takt(r, aus_achse);
++    MESS(2); /* Protokoll Tasten, Sticks, Belegung */
 +
 +    /* Bluetooth-Bericht im Format des Xbox Wireless Controller (Rumble über hid-microsoft, Tasten wie SDL erwartet) */
 +    extern void c2_xbox_ble_bericht(u64 r, const u16 a[4], u8 *b, u8 hat);
@@ -5104,10 +5190,12 @@ index 0000000..689523a
 +        c2_xinput_bericht(aus, aus_achse, xi);
 +        c2_xinput_takt(usb_host || ble_abonniert); /* Rumble auch über Bluetooth (Ausgabebericht 3), Stand der Vorrunde */
 +    }
++    MESS(6); /* Switch- bzw. XInput-Aufbereitung */
 +    if (c2_pro2_an()) {
 +        /* Pro Controller 2 per BLE an der Switch 2 (c2_pro2.c) */
 +        c2_pro2_takt(&sl, usb_host);
 +    }
++    MESS(7); /* Pro Controller 2 */
 +    if (!c2_switch_modus() && (memcmp(xi, alt_xi, sizeof(xi)) || runde % (100 / TAKT_MS) == 0) &&
 +        c2_hid_senden(xi, sizeof(xi))) {
 +        memcpy(alt_xi, xi, sizeof(xi));
@@ -5116,6 +5204,7 @@ index 0000000..689523a
 +            c2_log("USB-Gamepad (XInput): erster Bericht gesendet\r\n");
 +        }
 +    }
++    MESS(8); /* USB-Senden */
 +
 +    /* Bluetooth (BLE-HID, Report-ID 1): erst senden, wenn der Host die Reports abonniert hat (sonst scheitert jeder
 +     * Versuch, und alle 10 ms neu zu versuchen hat den Controller beim Koppeln zum Absturz gebracht). Dann bei
@@ -5134,6 +5223,7 @@ index 0000000..689523a
 +        memcpy(ble_alt, report, sizeof(report));
 +        ble_hid_data_send(1, report, sizeof(report));
 +    }
++    MESS(3); /* Berichte: Switch/XInput/Pro2/USB/BLE */
 +
 +    /* Protokoll: Sticks bei deutlicher Änderung, sonst alle 2 s */
 +    int melden = (runde % (2000 / TAKT_MS)) == 0;
@@ -5149,11 +5239,25 @@ index 0000000..689523a
 +               adc_get_voltage(AD_CH_PB4));
 +    }
 +
++    MESS(4); /* Stick-Protokoll */
 +    int usb = gpio_read(IO_PORTB_05);
 +    if (usb != alt_usb) {
 +        c2_log("USB-5V (PB5): %s\r\n", usb ? "an" : "aus");
 +        alt_usb = usb;
 +    }
++#if C2_MESSEN
++    MESS(5);
++    if (++mess_runden >= 1000 / TAKT_MS) {
++        c2_log("mess us/s %lu %lu %lu|%lu %lu %lu %lu|%lu %lu %lu max %lu %lu %lu|%lu %lu %lu %lu|%lu %lu abst %lu\r\n",
++               mess_summe[0], mess_summe[1], mess_summe[2], mess_summe[6], mess_summe[7], mess_summe[8],
++               mess_summe[3], mess_summe[4], mess_summe[5], mess_summe[9], mess_max[0], mess_max[1], mess_max[2],
++               mess_max[6], mess_max[7], mess_max[8], mess_max[3], mess_max[4], mess_max[5], mess_abstand_max);
++        memset(mess_summe, 0, sizeof(mess_summe));
++        memset(mess_max, 0, sizeof(mess_max));
++        mess_abstand_max = 0;
++        mess_runden = 0;
++    }
++#endif
 +    runde++;
 +}
 +
@@ -5217,7 +5321,7 @@ index 0000000..689523a
 +}
 diff --git a/apps/hid/modules/c2lite/c2_log.c b/apps/hid/modules/c2lite/c2_log.c
 new file mode 100644
-index 0000000..715c081
+index 0000000..8ed5adb
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_log.c
 @@ -0,0 +1,690 @@
@@ -5225,7 +5329,7 @@ index 0000000..715c081
 +#include "system/includes.h"
 +#include "c2_log.h"
 +#ifndef C2_STAND
-+#define C2_STAND "13a"
++#define C2_STAND "13b"
 +#endif
 +#include "asm/gpio.h"
 +
