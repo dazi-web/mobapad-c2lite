@@ -17,7 +17,8 @@ English version: [`PRO-CONTROLLER-2.en.md`](PRO-CONTROLLER-2.en.md). Code: `sdk-
 | Switch wecken | **Home** drücken (oder den Controller einschalten): 10 s Wecksignal mit der eigenen Adresse. |
 | Standby | Schläft die Switch, sucht der Controller noch 30 s und geht dann aus (am Ladekabel: Ladeschlaf). |
 | Per Kabel an der Switch | bleibt der kabelgebundene (klassische) Pro Controller; Bluetooth schweigt solange. |
-| Alter Weg | `c2lite-custom roh pro2 klassisch`: Switch-1-Pro-Controller über klassisches Bluetooth, Wecken mit geliehener Joy-Con-Kennung (`docs/FIRMWARE.md`). Zurück mit `pro2 standard`. |
+| Switch 1 / Switch 2 wählen | Beim Schieben auf Switch **Minus** halten = Switch 1 (klassischer Pro Controller, Logo blinkt 1× türkis), **Plus** = Switch 2 (Pro Controller 2, 2× türkis). Die Wahl bleibt gespeichert; auch in der Oberfläche (Karte „Konsole“) oder per `pro2 klassisch` / `pro2 standard`. |
+| Switch 1 | Koppeln über „Griff/Reihenfolge ändern“, Spielen und Wiederverbinden gehen. Eine schlafende Switch 1 weckt der Controller **nicht** (auch die Werks-Firmware nicht). An der Switch 2 weckt der Switch-1-Modus nur mit geliehener Joy-Con-Kennung (`docs/FIRMWARE.md`). |
 
 Befehle (USB-seriell, Schieber auf PC, oder `c2lite-custom roh …`):
 

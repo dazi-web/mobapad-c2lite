@@ -144,6 +144,25 @@ pub const TEXTE: &[(&str, &str)] = &[
     ("Download-Modus zum Flashen", "download mode for flashing"),
     ("Schieber", "Slider"),
     ("PC, Aus, Switch", "PC, Off, Switch"),
+    // ---------- Konsole wählen (Stufe 14) ----------
+    ("Konsole", "Console"),
+    ("Schieber auf Switch:", "Slider on Switch:"),
+    ("Switch 1", "Switch 1"),
+    ("Gespeichert. Gilt ab dem nächsten Schieben auf Switch.", "Saved. Takes effect the next time you slide to Switch."),
+    (
+        "Switch 1: klassischer Pro Controller (läuft auch an der Switch 2, weckt sie dort aber nur mit geliehener Joy-Con-Kennung).",
+        "Switch 1: classic Pro Controller (also works on the Switch 2, but wakes it there only with a borrowed Joy-Con identity).",
+    ),
+    (
+        "Switch 2: Pro Controller 2 (koppelt kabellos, weckt mit Home). Läuft nicht an der Switch 1.",
+        "Switch 2: Pro Controller 2 (pairs wirelessly, wakes with Home). Does not work on the Switch 1.",
+    ),
+    (
+        "Am Controller: beim Schieben auf Switch Minus (Switch 1) oder Plus (Switch 2) halten.",
+        "On the controller: hold Minus (Switch 1) or Plus (Switch 2) while sliding to Switch.",
+    ),
+    ("Minus / Plus beim Schieben auf Switch", "Minus / Plus while sliding to Switch"),
+    ("Switch 1 / Switch 2 wählen (Logo blinkt 1× bzw. 2× türkis)", "choose Switch 1 / Switch 2 (logo blinks cyan 1× or 2×)"),
     // ---------- Switch 2 wecken ----------
     ("Switch 2", "Switch 2"),
     ("Als Pro Controller 2 gekoppelt: Home weckt die Switch 2", "Paired as Pro Controller 2: Home wakes the Switch 2"),

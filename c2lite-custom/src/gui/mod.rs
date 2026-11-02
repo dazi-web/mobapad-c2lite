@@ -885,6 +885,7 @@ impl App {
                     ("Licht + rechter Stick", "hoch/runter Helligkeit"),
                     ("Licht + Home", "nur klassischer Pro Controller: Joy-Con-2-Weckkennung lernen (Logo orange)"),
                     ("Home + Minus 5 s", "Download-Modus zum Flashen"),
+                    ("Minus / Plus beim Schieben auf Switch", "Switch 1 / Switch 2 wählen (Logo blinkt 1× bzw. 2× türkis)"),
                     ("Schieber", "PC, Aus, Switch"),
                 ] {
                     ui.label(RichText::new(t(k)).strong());
@@ -898,6 +899,35 @@ impl App {
     /// Home am Controller weckt die Switch 2: dafür braucht der Controller die Kennung eines Joy-Con 2
     fn wecken_karte(&mut self, ui: &mut egui::Ui) {
         let c = farben(ui.ctx());
+        // Stufe 14: Was der Schieber in Stellung „Switch“ ist (gespeichert im Controller, wirkt beim nächsten Start dort)
+        if let Some((klassisch, _)) = self.pro2 {
+            karte(ui, |ui| {
+                titel(ui, "Konsole");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(t("Schieber auf Switch:"));
+                    for (k, text) in [(false, "Switch 2"), (true, "Switch 1")] {
+                        if ui.add(stil::wahl(klassisch == k, text).min_size(Vec2::new(110.0, 30.0))).clicked() && klassisch != k {
+                            let befehl = if k { "pro2 klassisch" } else { "pro2 standard" };
+                            self.senden(Zweck::Still, vec![befehl.into()]);
+                            self.senden(Zweck::Pro2, vec!["pro2 status".into()]);
+                            self.senden(Zweck::SwitchDiag, vec!["switch diag".into()]);
+                            self.melden("Gespeichert. Gilt ab dem nächsten Schieben auf Switch.", false);
+                        }
+                    }
+                });
+                hinweis(
+                    ui,
+                    if klassisch {
+                        "Switch 1: klassischer Pro Controller (läuft auch an der Switch 2, weckt sie dort aber nur mit geliehener Joy-Con-Kennung)."
+                    } else {
+                        "Switch 2: Pro Controller 2 (koppelt kabellos, weckt mit Home). Läuft nicht an der Switch 1."
+                    },
+                );
+                hinweis(ui, "Am Controller: beim Schieben auf Switch Minus (Switch 1) oder Plus (Switch 2) halten.");
+            });
+            ui.add_space(12.0);
+        }
         // Ab Stufe 11 (Standard): Pro Controller 2, weckt mit der eigenen Adresse; keine Joy-Con-Kennung nötig
         if let Some((false, gekoppelt)) = self.pro2 {
             karte(ui, |ui| {

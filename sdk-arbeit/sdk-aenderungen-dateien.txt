@@ -36,6 +36,7 @@ apps/hid/modules/c2lite/c2_pro2_profil.h
 apps/hid/modules/c2lite/c2_rgb.c
 apps/hid/modules/c2lite/c2_switch.c
 apps/hid/modules/c2lite/c2_switch.h
+apps/hid/modules/c2lite/c2_switch1_weck.c
 apps/hid/modules/c2lite/c2_xinput.c
 apps/hid/modules/user_cfg.c
 cpu/br23/sdk_ld.c

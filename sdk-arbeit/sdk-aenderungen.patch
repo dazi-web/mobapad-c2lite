@@ -126,7 +126,7 @@ index f61c39c..3e09bc7 100644
          default:
              log_error("unsupported class req");
 diff --git a/apps/common/device/usb/device/custom_hid.c b/apps/common/device/usb/device/custom_hid.c
-index 5cf3471..58f64f2 100644
+index 5cf3471..730ea99 100644
 --- a/apps/common/device/usb/device/custom_hid.c
 +++ b/apps/common/device/usb/device/custom_hid.c
 @@ -42,7 +42,11 @@ static const u8 sHIDDescriptor[] = {
@@ -195,6 +195,21 @@ index 5cf3471..58f64f2 100644
  
  static u32 get_hid_report_desc_len(u32 index)
  {
+@@ -106,6 +138,14 @@ u32 custom_hid_tx_data(const usb_dev usb_id, const u8 *buffer, u32 len)
+     if (custom_hid_info == NULL || custom_hid_info->cfg_done == 0) {
+         return 0;
+     }
++#ifdef CONFIG_BOARD_C2LITE
++    /* Voriger Bericht noch nicht abgeholt: nicht senden statt bis zu 20 ms in usb_g_ep_write zu warten (dieselbe
++     * Ursache wie der Watchdog-Neustart bei Stickbewegung in Stufe 13a, hid.c c2_ep_tx_belegt) */
++    extern int c2_ep_tx_belegt(u32 ep);
++    if (c2_ep_tx_belegt(CUSTOM_HID_EP_IN)) {
++        return 0;
++    }
++#endif
+     return usb_g_intr_write(usb_id, CUSTOM_HID_EP_IN, buffer, len);
+ }
+ 
 diff --git a/apps/common/device/usb/device/descriptor.c b/apps/common/device/usb/device/descriptor.c
 index 1df4c20..8c3f94d 100644
 --- a/apps/common/device/usb/device/descriptor.c
@@ -293,7 +308,7 @@ index 1df4c20..8c3f94d 100644
  }
  
 diff --git a/apps/common/device/usb/device/hid.c b/apps/common/device/usb/device/hid.c
-index 5ff75b0..a5c16ca 100644
+index 5ff75b0..4b88e3e 100644
 --- a/apps/common/device/usb/device/hid.c
 +++ b/apps/common/device/usb/device/hid.c
 @@ -20,6 +20,17 @@
@@ -367,7 +382,7 @@ index 5ff75b0..a5c16ca 100644
  
  static u32 get_hid_report_desc_len(u32 index)
  {
-@@ -110,6 +159,61 @@ static void *get_hid_report_desc(u32 index)
+@@ -110,6 +159,62 @@ static void *get_hid_report_desc(u32 index)
  
  
  static u8 *hid_ep_in_dma;
@@ -408,7 +423,8 @@ index 5ff75b0..a5c16ca 100644
 +    }
 +}
 +
-+static int c2_ep_tx_belegt(u32 ep)
++/* Auch für den kabelgebundenen Pro Controller im Switch-Modus (custom_hid.c, Stufe 14b) */
++int c2_ep_tx_belegt(u32 ep)
 +{
 +    local_irq_disable();
 +    c2_usb_reg_schreiben(14, ep); /* Index */
@@ -429,7 +445,7 @@ index 5ff75b0..a5c16ca 100644
  /* static u8 *hid_ep_out_dma; */
  
  static u32 hid_tx_data(struct usb_device_t *usb_device, const u8 *buffer, u32 len)
-@@ -124,18 +228,43 @@ static void hid_rx_data(struct usb_device_t *usb_device, u32 ep)
+@@ -124,18 +229,43 @@ static void hid_rx_data(struct usb_device_t *usb_device, u32 ep)
      /* hid_tx_data(usb_device, hid_ep_out_dma, rx_len); */
  }
  
@@ -473,7 +489,7 @@ index 5ff75b0..a5c16ca 100644
  
      /* hid_ep_out_dma = hid_ep_in_dma + MAXP_SIZE_HIDIN; */
      return 0;
-@@ -275,8 +404,10 @@ u32 hid_desc_config(const usb_dev usb_id, u8 *ptr, u32 *cur_itf_num)
+@@ -275,8 +405,10 @@ u32 hid_desc_config(const usb_dev usb_id, u8 *ptr, u32 *cur_itf_num)
          ASSERT(0, "hid set interface_reset_hander fail");
      }
  
@@ -625,7 +641,7 @@ index 96e411d..df6e3c3 100644
      {"gamebox",             3,     0,   1024,   128 },
  #endif
 diff --git a/apps/hid/board/br23/Makefile b/apps/hid/board/br23/Makefile
-index 075f777..1452fb8 100644
+index 075f777..980f48f 100644
 --- a/apps/hid/board/br23/Makefile
 +++ b/apps/hid/board/br23/Makefile
 @@ -169,6 +169,7 @@ INCLUDES := \
@@ -644,7 +660,7 @@ index 075f777..1452fb8 100644
  	../../../../apps/hid/config/lib_btctrler_config.c \
  	../../../../apps/hid/config/lib_btstack_config.c \
  	../../../../apps/hid/config/lib_driver_config.c \
-@@ -288,6 +290,15 @@ c_SRC_FILES := \
+@@ -288,6 +290,16 @@ c_SRC_FILES := \
  	../../../../apps/hid/modules/bt/ble_hogp.c \
  	../../../../apps/hid/modules/bt/edr_hid_user.c \
  	../../../../apps/hid/modules/misc.c \
@@ -654,6 +670,7 @@ index 075f777..1452fb8 100644
 +	../../../../apps/hid/modules/c2lite/c2_rgb.c \
 +	../../../../apps/hid/modules/c2lite/c2_ota.c \
 +	../../../../apps/hid/modules/c2lite/c2_switch.c \
++	../../../../apps/hid/modules/c2lite/c2_switch1_weck.c \
 +	../../../../apps/hid/modules/c2lite/c2_belegung.c \
 +	../../../../apps/hid/modules/c2lite/c2_xinput.c \
 +	../../../../apps/hid/modules/c2lite/c2_pro2.c \
@@ -2101,9 +2118,18 @@ index 86b5fed..587a3de 100644
  
  #endif
 diff --git a/apps/hid/config/lib_btctrler_config.c b/apps/hid/config/lib_btctrler_config.c
-index 649e1af..4a6dc8d 100644
+index 649e1af..0c9c428 100644
 --- a/apps/hid/config/lib_btctrler_config.c
 +++ b/apps/hid/config/lib_btctrler_config.c
+@@ -129,7 +129,7 @@ const int config_dut_protocol_mode = 0;
+ #if CONFIG_APP_STANDARD_KEYBOARD
+ const int config_delete_link_key          = 0;           //配置是否连接失败返回PIN or Link Key Missing时删除linkKey
+ #else
+-const int config_delete_link_key          = 1;
++const int config_delete_link_key          = 0; /* 16c: Bond nicht bei Verbindungsfehler löschen (Testbarkeit, kein ständiges Neu-Syncen) */
+ #endif
+ /*-----------------------------------------------------------*/
+ /**
 @@ -196,7 +196,12 @@ const uint64_t config_btctler_le_features = SET_ENCRYPTION_CFG | SET_SELECT_PHY_
  const int config_btctler_le_acl_packet_length = 27;
  #endif
@@ -2724,7 +2750,7 @@ index b9d4447..055ee4b 100644
              break;
  
 diff --git a/apps/hid/modules/bt/app_comm_edr.c b/apps/hid/modules/bt/app_comm_edr.c
-index 6e76764..7aee4c2 100644
+index 6e76764..dea90c3 100644
 --- a/apps/hid/modules/bt/app_comm_edr.c
 +++ b/apps/hid/modules/bt/app_comm_edr.c
 @@ -32,6 +32,9 @@
@@ -2808,7 +2834,22 @@ index 6e76764..7aee4c2 100644
  
      switch (bt->event) {
      case BT_STATUS_INIT_OK:
-@@ -592,6 +627,9 @@ static void bt_send_pair(u8 en)
+@@ -543,6 +578,14 @@ void sys_auto_sniff_controle(u8 enable, u8 *addr)
+ /*************************************************************************************************/
+ void bt_wait_phone_connect_control_ext(u8 inquiry_en, u8 page_scan_en)
+ {
++#ifdef CONFIG_BOARD_C2LITE
++    /* Stufe 15o: während des Switch-1-Weckablaufs keine Scans einschalten (z. B. nach PAGE_TIMEOUT eines normalen
++     * Anrufs); sonst teilt der Zeitplaner dem Weck-Task nur 32 Slots zu und der Ablauf bricht ab (C2-4, C2-8) */
++    extern int c2_s1_beschaeftigt(void);
++    if ((inquiry_en || page_scan_en) && c2_s1_beschaeftigt()) {
++        return;
++    }
++#endif
+     if (inquiry_en) {
+         user_send_cmd_prepare(USER_CTRL_WRITE_SCAN_ENABLE, 0, NULL);
+     } else {
+@@ -592,6 +635,9 @@ static void bt_send_pair(u8 en)
  static void bt_hci_event_connection(struct bt_event *bt)
  {
      bt_wait_phone_connect_control_ext(0, 0);
@@ -2818,7 +2859,7 @@ index 6e76764..7aee4c2 100644
  }
  
  //已断开
-@@ -642,6 +680,9 @@ int bt_comm_edr_hci_event_handler(struct bt_event *bt)
+@@ -642,6 +688,9 @@ int bt_comm_edr_hci_event_handler(struct bt_event *bt)
  {
      //对应原来的蓝牙连接上断开处理函数  ,bt->value=reason
      log_info("--------%s reason %x %x", __FUNCTION__, bt->event, bt->value);
@@ -3501,10 +3542,10 @@ index 0000000..32731f8
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_belegung.c b/apps/hid/modules/c2lite/c2_belegung.c
 new file mode 100644
-index 0000000..fcd4bde
+index 0000000..30ea278
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_belegung.c
-@@ -0,0 +1,813 @@
+@@ -0,0 +1,819 @@
 +/* C2 Lite: Rücktasten, M-Taste, Turbo und Makros. Bedienung wie die Werks-Firmware 0.04 (statische Analyse 30.10.:
 + * Werkszustand 0x85AC mit Tabelle app 0x24500, Zustandsautomat 0x17712, Aufnahme 0x18028/0x19110, Turbo 0x17A2E,
 + * Wiedergabe 0x18080, Speichern ~2 s nach der letzten Änderung 0x1A5EA). Funktionstaste ist die Licht-Taste:
@@ -4045,6 +4086,12 @@ index 0000000..fcd4bde
 +        rgb[0] = an ? 255 : 0, rgb[1] = an ? 120 : 0, rgb[2] = 0; /* orange blinkend: lauscht auf ein Wecksignal */
 +        return 1;
 +    }
++    extern int c2_s1_beschaeftigt(void);
++    if (c2_s1_beschaeftigt()) {
++        u8 an = (jetzt / 200) % 2;
++        rgb[0] = 0, rgb[1] = 0, rgb[2] = an ? 255 : 0; /* 16i: blau blinkend: Switch-1-Weckversuch läuft */
++        return 1;
++    }
 +    if (aufnahme) {
 +        u8 an = (jetzt / 250) % 2;
 +        rgb[0] = 0, rgb[1] = an ? 255 : 0, rgb[2] = an ? 255 : 0; /* türkis blinkend wie die Werks-FW (0, 255, 255) */
@@ -4320,10 +4367,10 @@ index 0000000..fcd4bde
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_belegung.h b/apps/hid/modules/c2lite/c2_belegung.h
 new file mode 100644
-index 0000000..bad24a6
+index 0000000..dda57e2
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_belegung.h
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +#ifndef C2_BELEGUNG_H
 +#define C2_BELEGUNG_H
 +/* C2 Lite: Rücktasten, M-Taste, Turbo und Makros wie die Werks-Firmware (c2_belegung.c) */
@@ -4341,6 +4388,8 @@ index 0000000..bad24a6
 +void c2_belegung_init(void);
 +/* Logo-Farbe während Aufnahme und nach Bedienschritten: 1 = rgb gesetzt */
 +int c2_belegung_logo(u8 rgb[3]);
++/* Logo n-mal in der Farbe r, g, b blinken lassen (Rückmeldung für Bedienschritte) */
++void c2_belegung_hinweis(u8 r, u8 g, u8 b, u8 n);
 +/* Zusätzliche Spieler-LED (Bit wie led_maske): blinkt bei Turbo und laufendem Makro wie im Original */
 +u8 c2_belegung_led(void);
 +/* Textbefehle „belegung …“ und „turbo …“; 1 = war einer davon */
@@ -4356,10 +4405,10 @@ index 0000000..bad24a6
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_eingaben.c b/apps/hid/modules/c2lite/c2_eingaben.c
 new file mode 100644
-index 0000000..19afbf6
+index 0000000..40e9b7a
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_eingaben.c
-@@ -0,0 +1,959 @@
+@@ -0,0 +1,983 @@
 +/* C2 Lite: Eingaben lesen, als HID-Gamepad über USB senden und über das USB-Protokoll (c2_log) melden.
 + * Keine LED, kein Motor, kein Laden (kommt in späteren Stufen).
 + * Pin-Karte und Abfrage-Ablauf aus der Werks-Firmware, am Gerät bestätigt:
@@ -5093,7 +5142,15 @@ index 0000000..19afbf6
 +    r |= phase_lesen(PHASE_B, ARRAY_SIZE(PHASE_B), 0);
 +    r |= phase_lesen(DIREKT, ARRAY_SIZE(DIREKT), 0);
 +    c2_rgb_senden(); /* PA7 und PA8 sind hier low (siehe c2_rgb.c) */
-+    MESS(0); /* Tasten lesen + Licht senden */
++    MESS(0);
++    if (runde == 500 / TAKT_MS) {
++        /* Switch-Weg beim Start gewählt (c2_pro2_an): Logo blinkt türkis, 1× = Switch 1, 2× = Switch 2 */
++        extern int c2_pro2_wahl_hinweis(void);
++        int w = c2_pro2_wahl_hinweis();
++        if (w) {
++            c2_belegung_hinweis(0, 200, 255, w);
++        }
++    } /* Tasten lesen + Licht senden */
 +    /* Neu gedrückte Tasten (für Reaktiv-Licht, Ruhezeit und die Licht-Taste) */
 +    u64 neu = r & ~alt_rollen;
 +    u8 gruppe = 0;
@@ -5261,6 +5318,22 @@ index 0000000..19afbf6
 +    runde++;
 +}
 +
++/* Switch-Weg beim Start wählen (Stufe 14): Minus bzw. Plus gehalten, während der Controller mit Schieber auf Switch
++ * startet? Direkt gelesen wie phase_lesen(PHASE_B) (PA7 und PA8 low, Pull-up, gedrückt = low), weil die Abfrage-Runde
++ * beim Festlegen des Bluetooth-Modus (app_keyboard.c, hidkey_vm_deal) noch nicht läuft.
++ * 1 = nur Minus (Switch 1), 2 = nur Plus (Switch 2), 0 = keine oder beide */
++int c2_start_wahltaste(void)
++{
++    gpio_direction_output(IO_PORTA_07, 0);
++    gpio_direction_output(IO_PORTA_08, 0);
++    eingang(IO_PORTB_06, 1, 0); /* Minus */
++    eingang(IO_PORTB_07, 1, 0); /* Plus */
++    for (volatile int w = 0; w < 2000; w++) { /* Pull-ups einschwingen lassen */
++    }
++    int minus = !gpio_read(IO_PORTB_06), plus = !gpio_read(IO_PORTB_07);
++    return minus && !plus ? 1 : plus && !minus ? 2 : 0;
++}
++
 +/* Stick-Mitte: Mittel aus einigen Messungen beim Start (Sticks dabei nicht berühren) */
 +static void mitte_messen(void *priv)
 +{
@@ -5321,15 +5394,15 @@ index 0000000..19afbf6
 +}
 diff --git a/apps/hid/modules/c2lite/c2_log.c b/apps/hid/modules/c2lite/c2_log.c
 new file mode 100644
-index 0000000..8ed5adb
+index 0000000..fa0b325
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_log.c
-@@ -0,0 +1,690 @@
+@@ -0,0 +1,732 @@
 +#include "app_config.h"
 +#include "system/includes.h"
 +#include "c2_log.h"
 +#ifndef C2_STAND
-+#define C2_STAND "13b"
++#define C2_STAND "16o"
 +#endif
 +#include "asm/gpio.h"
 +
@@ -5826,6 +5899,48 @@ index 0000000..8ed5adb
 +        u32 s = zahl_lesen(&p);
 +        c2_ruhe_setzen(s);
 +        c2_log("ok: ruhe %lu s\r\n", s);
++    } else if (!strcmp(b, "switch1 weck test")) {
++        /* Stufe 15: Weckcode-Berechnung gegen die Beispiele der Protokollbeschreibung */
++        extern int c2_s1_weck_selbsttest(void);
++        int n = c2_s1_weck_selbsttest();
++        c2_log("%s: switch1 weck test %d von 4\r\n", n == 4 ? "ok" : "fehler", n);
++    } else if (!strcmp(b, "switch1 weck info")) {
++        extern int c2_s1_weck_info(void);
++        c2_log(c2_s1_weck_info() ? "ok: switch1 weck info\r\n" : "fehler: switch1 weck info: keine Konsole gekoppelt\r\n");
++    } else if (!strcmp(b, "switch1 weck senden") || !strncmp(b, "switch1 weck dauer", 18) ||
++               !strcmp(b, "switch1 weck stopp")) {
++        /* Stufe 15 C1: Phase 1-3 wie die Werks-FW (c2_switch1_weck.c). Im PC-Modus erlaubt, damit der Controller am
++         * Kabel bleiben kann (USB-seriell); gesperrt im Pro-Controller-2-Modus und bei klassischer Verbindung. */
++        extern int c2_s1_weck_dauer(int n);
++        extern void c2_s1_weck_stopp(void);
++        extern int c2_pro2_an(void);
++        extern int c2_switch_bt_verbunden(void);
++        if (!strcmp(b, "switch1 weck stopp")) {
++            c2_s1_weck_stopp();
++            c2_log("ok: switch1 weck stopp (laufender Durchgang endet nach 3,2 s)\r\n");
++        } else if (c2_pro2_an()) {
++            c2_log("fehler: switch1 weck: nicht im Pro-Controller-2-Modus\r\n");
++        } else if (c2_switch_bt_verbunden()) {
++            c2_log("fehler: switch1 weck: schon verbunden\r\n");
++        } else {
++            int n = 1;
++            if (b[13] == 'd') {
++                const char *p = b + 18;
++                while (*p == ' ') {
++                    p++;
++                }
++                n = *p ? (int)zahl_lesen(&p) : 10;
++            }
++            int r = c2_s1_weck_dauer(n);
++            if (r) {
++                c2_log("fehler: switch1 weck %d\r\n", r);
++            } else {
++                c2_log("ok: switch1 weck (%d Durchgang/Durchgaenge zu 3,2 s, Bericht folgt)\r\n", n);
++            }
++        }
++    } else if (!strcmp(b, "switch1 weck bericht")) {
++        extern int c2_s1_weck_bericht(void);
++        c2_log(c2_s1_weck_bericht() ? "ok: switch1 weck bericht\r\n" : "fehler: switch1 weck bericht: keiner\r\n");
 +    } else if (!strcmp(b, "switch weck lernen")) {
 +        extern int c2_weck_lernen(void);
 +        int r = c2_weck_lernen();
@@ -6238,10 +6353,10 @@ index 0000000..453a90f
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_pro2.c b/apps/hid/modules/c2lite/c2_pro2.c
 new file mode 100644
-index 0000000..26fe59f
+index 0000000..a4ce6af
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_pro2.c
-@@ -0,0 +1,796 @@
+@@ -0,0 +1,820 @@
 +/* Pro Controller 2 über Bluetooth LE (Switch 2), Stufe 11 (Versuch). Ziel: die Switch 2 koppelt den C2 Lite wie einen
 + * echten Pro Controller 2 und lässt sich von ihm mit seiner eigenen Adresse wecken (ohne geliehene Joy-Con-Kennung).
 + *
@@ -6332,6 +6447,15 @@ index 0000000..26fe59f
 +                          0xba, 0x2b, 0x63, 0x25, 0xc4, 0x1a, 0x5f, 0x10}; /* fester Schlüsselteil des Controllers */
 +
 +static u8 aktiv; /* in diesem Start als Pro Controller 2 */
++static u8 wahl_hinweis; /* beim Start per Taste gewählt: 1 = Switch 1, 2 = Switch 2 (Rückmeldung in c2_eingaben.c) */
++static void speichern(void *priv);
++
++int c2_pro2_wahl_hinweis(void)
++{
++    u8 w = wahl_hinweis;
++    wahl_hinweis = 0;
++    return w;
++}
 +
 +int c2_pro2_an(void)
 +{
@@ -6340,6 +6464,21 @@ index 0000000..26fe59f
 +        geladen = 1;
 +        if (syscfg_read(CFG_PRO2, (u8 *)&vm, sizeof(vm)) != sizeof(vm) || vm.version != 1) {
 +            memset(&vm, 0, sizeof(vm));
++        }
++        /* Stufe 14: beim Start mit Schieber auf Switch Minus halten = Switch 1 (klassischer Pro Controller über BR/EDR),
++         * Plus = Switch 2 (Pro Controller 2 über BLE). Gemerkt wie „pro2 klassisch|standard“. */
++        if (c2_switch_modus()) {
++            extern int c2_start_wahltaste(void);
++            int w = c2_start_wahltaste();
++            if (w) {
++                u8 k = w == 1;
++                if (vm.klassisch != k || vm.version != 1) {
++                    vm.klassisch = k;
++                    speichern(NULL);
++                }
++                wahl_hinweis = w;
++                c2_log("pro2: beim Start gewählt: %s\r\n", k ? "Switch 1 (klassisch)" : "Switch 2 (Pro Controller 2)");
++            }
 +        }
 +        aktiv = vm.an != 0 || (c2_switch_modus() && !vm.klassisch);
 +        if (vm.an == 2) {
@@ -7335,10 +7474,10 @@ index 0000000..ff1f7fc
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_switch.c b/apps/hid/modules/c2lite/c2_switch.c
 new file mode 100644
-index 0000000..c203b93
+index 0000000..e5d6061
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_switch.c
-@@ -0,0 +1,778 @@
+@@ -0,0 +1,832 @@
 +/* C2 Lite: Switch-Modus als „Pro Controller“ über USB (057E:2009) und klassisches Bluetooth, für Switch 1 und 2.
 + * Protokoll nach der öffentlichen Doku (github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering), Gegenprobe
 + * mit der Werks-Firmware (Analyse 30.10.: USB-OUT 0x1B66C, Unterbefehle 0xF004, SPI-Werte 0xF21A).
@@ -7480,6 +7619,8 @@ index 0000000..c203b93
 +    }
 +    letzte[ereignis_n % LETZTE] = e;
 +    ereignis_n++;
++    extern void c2_s1_ereignis(u8 art, u8 ev, u8 wert, u8 rx, u16 zeit);
++    c2_s1_ereignis(e.art, e.ev, e.wert, e.rx, e.zeit); /* Stufe 15 C2: nach Phase 4 auch in den RAM1-Bericht */
 +}
 +
 +/* Gegenstelle der letzten Verbindungs-Ereignisse (Leitungsreihenfolge LE): 0 = Start, 1 = verbunden, 2 = getrennt */
@@ -7755,6 +7896,29 @@ index 0000000..c203b93
 +    return 1;
 +}
 +
++/* Stufe 15 Weg B (c2_switch1_weck.c): nach angenommener Phase 3 normal anrufen, mit Verschlüsselung/HID wie oben */
++int c2_switch_anrufen(void)
++{
++    return anrufen();
++}
++
++/* Stufe 15o: der Weck-Link (c2_switch1_weck.c) ist logisch eine Verbindung der Konsole: keine eigene
++ * Authentifizierung/Verschlüsselung erzwingen, die Switch führt (wie beim Koppeln und wie die Demo, swpro_link.c). */
++u8 c2_switch_weck_link_aktiv; /* 15r: 1 = Weck-Link, HID nach der Verschlüsselung selbst öffnen (Switch führt Auth) */
++void c2_switch_weck_link(void)
++{
++    /* 16m: wie ein eigener Anruf weiterführen (Authentifizierung → Verschlüsselung → HID, c2_switch_acl_verbunden).
++     * Beleg 16l: nach Connection Complete (h03/00) 8 s lang kein Host-Ereignis der Switch – sie wartet auf uns.
++     * Dazu die 10-s-Sperre des eigenen Anrufs (16l: normaler Anruf nach 8,4 s beendete den Weck-Link). */
++#if 0 /* 16m – am Gerät ohne Wirkung (E3c/00) und im Werk nicht belegt; 16n zurück zum werkstreuen Stand 16l */
++    eigener_anruf = 1;
++    c2_switch_weck_link_aktiv = 0;
++    verbinden_ab = ms + 10000;
++#endif
++    eigener_anruf = 0;
++    c2_switch_weck_link_aktiv = 1;
++}
++
 +/* Switch 2 aufwecken (die Werks-FW scheitert daran, vermutlich weil sie von ihrer BLE-Adresse sendet):
 + * Nintendo-Herstellerdaten wie Werks-Vorlage (app 0x53441) und github.com/thiagobucca/nintendo-switch2-esp32-waker,
 + * Absender klassische Adresse (ble_hogp.c), Zustand 0x81 = wiederverbinden. Die Konsolen-Adresse steht im Signal in
@@ -7910,20 +8074,44 @@ index 0000000..c203b93
 +
 +static void wiederverbinden(const struct c2_switch_lage *l)
 +{
++    extern void c2_s1_autotest_takt(void);
++    c2_s1_autotest_takt(); /* 15p: automatischer Weck-Dauertest (c2_switch1_weck.c) */
 +    static u64 alt_rollen;
 +    u8 usb = gpio_read(IO_PORTB_05);
 +    u64 neu = l->rollen & ~alt_rollen;
 +    alt_rollen = l->rollen;
-+    /* Home ohne Verbindung (auch beim Einschalten per Home): Switch wecken, höchstens alle 3 s */
++    /* Stufe 16 abgeschlossen (2.11.): Switch-1-Wecken eingestellt (Werks-FW weckt diese Switch selbst nicht, Test W1;
++     * eigener Weg bis zur vollständigen LMP-Einrichtung, aber ohne Aufwachen – STATUS.md Stufe 16/17). Der Weckcode
++     * bleibt in c2_switch1_weck.c, ist aber ohne Auslöser. C2_S1_WECKEN 1 schaltet Kamera+Home bzw. Home wieder zu. */
++#ifndef C2_S1_WECKEN
++#define C2_S1_WECKEN 0
++#endif
++#if C2_S1_WECKEN
++    if ((neu & (1ULL << C2_ROLLE_HOME)) && (l->rollen & (1ULL << C2_ROLLE_KAMERA)) && !c2_switch_bt_verbunden()) {
++        extern int c2_s1_weck_dauer(int n);
++        int r = c2_s1_weck_dauer(5);
++        c2_log("switch1: Kamera+Home -> weck senden %d\r\n", r);
++        geweckt_ms = ms ? ms : 1;
++        alt_usb = usb;
++        return;
++    }
++#endif
++    /* Home ohne Verbindung (auch beim Einschalten per Home): Weckwerbung (Switch 2), höchstens alle 3 s – wie vor 16i */
 +    if ((neu & (1ULL << C2_ROLLE_HOME)) && !c2_switch_bt_verbunden() && (!geweckt_ms || ms - geweckt_ms > 3000)) {
-+        c2_switch_wecken();
++        c2_switch_wecken(); /* Switch 2: BLE-Weckwerbung (geliehene Joy-Con-Kennung) */
++#if C2_S1_WECKEN
++        extern void c2_s1_wecken(void);
++        c2_s1_wecken();
++#endif
++        geweckt_ms = ms ? ms : 1;
 +    }
 +    if ((alt_usb && !usb) || neu) {
 +        versuche = 0;
 +    }
 +    alt_usb = usb;
-+    if (usb || c2_switch_bt_verbunden() || versuche >= 3 || (s32)(ms - verbinden_ab) < 0) {
-+        return;
++    extern int c2_s1_beschaeftigt(void);
++    if (usb || c2_switch_bt_verbunden() || versuche >= 3 || (s32)(ms - verbinden_ab) < 0 || c2_s1_beschaeftigt()) {
++        return; /* 15o: kein normaler Anruf, solange Weckablauf oder Weck-Link laufen */
 +    }
 +    if (anrufen()) {
 +        angerufen = ms ? ms : 1;
@@ -7982,6 +8170,7 @@ index 0000000..c203b93
 +{
 +    extern u8 c2_switch_verschluesselt;
 +    c2_switch_verschluesselt = 0;
++    /* 15r: Weck-Link nicht wie eigenen Anruf behandeln (keine erzwungene Authentifizierung) */
 +    if (!(c2_switch_modus() && eigener_anruf == 1)) {
 +        return;
 +    }
@@ -8016,6 +8205,10 @@ index 0000000..c203b93
 +    c2_switch_verschluesselt = 1;
 +    if (eigener_anruf == 2) {
 +        eigener_anruf = 0;
++        sys_timeout_add(NULL, hid_nach_verschluesselung, 30);
++    } else if (c2_switch_weck_link_aktiv) {
++        c2_switch_weck_link_aktiv = 0;
++        c2_switch_bt_ereignis('k', 3, 0); /* 15r: Weck-Link verschlüsselt -> HID öffnen */
 +        sys_timeout_add(NULL, hid_nach_verschluesselung, 30);
 +    }
 +}
@@ -8175,6 +8368,1438 @@ index 0000000..7154169
 +u8 c2_pro2_spieler(void);                                 /* Spieler-LEDs von der Konsole, Bit 0 = Spieler 1 */
 +void c2_pro2_takt(const struct c2_switch_lage *l, int usb_host); /* alle 10 ms: Eingabebericht, Wecken auf Home */
 +int c2_pro2_befehl(const char *b);                        /* „pro2 status|standard|klassisch|…“ */
++
++#endif
+diff --git a/apps/hid/modules/c2lite/c2_switch1_weck.c b/apps/hid/modules/c2lite/c2_switch1_weck.c
+new file mode 100644
+index 0000000..9ad4c71
+--- /dev/null
++++ b/apps/hid/modules/c2lite/c2_switch1_weck.c
+@@ -0,0 +1,1426 @@
++/* C2 Lite: Switch 1 aus dem Standby wecken (Stufe 15).
++ *
++ * Eine schlafende Switch 1 antwortet nicht auf normales Paging (am Gerät 1.11.: ERROR_CODE_PAGE_TIMEOUT). Sie wartet
++ * auf einen eigenen Weckablauf mit einem „Weck-Access-Code“: das normale BR/EDR-Sync-Word ihrer LAP, die unteren
++ * 32 der 34 Paritätsbits invertiert. Ablauf (Phase 1 Weckcode senden, Phase 2 Antwort der Switch mit LT_ADDR, Adresse
++ * und Uhr, Phase 3 eigene Adresse, dann ACL-Aufbau) nach der öffentlichen Protokollbeschreibung in
++ * github.com/608/NS1-Wakeup-Demo, docs/wakeup-protocol.en.md (dort aus Funkmitschnitten; hier nur die Fakten, eigener
++ * Code). Sync-Word nach der Bluetooth-Spezifikation (Baseband: BCH(64,30), PN-Folge, Barker-Folge).
++ *
++ * Stand: Berechnung und Einstieg. Der Funkteil (Senden und Empfangen mit dem Weck-Access-Code, ohne Whitening, auf
++ * festen Kanälen, Antwort nach 634 µs) folgt nach der Machbarkeitsprüfung der Jieli-Bibliothek (STATUS.md, Stufe 15 A).
++ * Gegenprobe der Berechnung: werkzeuge/switch1_weckcode.py und „switch1 weck test“ am Gerät. */
++#include "app_config.h"
++#include "system/includes.h"
++#include "btstack/avctp_user.h"
++#include "c2_log.h"
++
++#ifdef CONFIG_BOARD_C2LITE
++
++#define PN 0x83848D96BBCC54FCULL
++#define BCH_GEN 0x37CD0EB67ULL                    /* Generatorpolynom BCH(64,30) */
++#define GEN ((BCH_GEN << 1) ^ BCH_GEN)           /* mal (D + 1), 35 Bit */
++
++/* Rest von z (bis 64 Bit) geteilt durch GEN über GF(2) */
++static u64 gf2_rest(u64 z)
++{
++    for (int bit = 63; bit >= 34; bit--) {
++        if (z & (1ULL << bit)) {
++            z ^= GEN << (bit - 34);
++        }
++    }
++    return z;
++}
++
++/* 64-Bit-Sync-Word zur LAP (Bit 0 wird zuerst gesendet) */
++static u64 sync_word(u32 lap)
++{
++    u64 barker = (lap & 0x800000) ? 0x13 : 0x2C;
++    u64 x = ((barker << 24) | (lap & 0xFFFFFF)) ^ (PN >> 34);
++    u64 z = x << 34;
++    return (z ^ gf2_rest(z)) ^ PN;
++}
++
++struct c2_s1_weck {
++    u32 lap;
++    u64 sync;     /* normales Sync-Word */
++    u64 p34_weck; /* 34 Paritätsbits des Weck-Access-Codes (untere 32 invertiert) */
++    u32 w;        /* invertierte untere 32 Bit des Sync-Words = Weckcode */
++    u32 phase1;   /* Wort der Phase-1-Nutzdaten: w um 10 Bit nach rechts rotiert, Little Endian gesendet */
++};
++
++/* adr in Leitungsreihenfolge (adr[0] = niederwertigstes Byte), wie die Bibliothek sie speichert */
++static void berechnen(const u8 *adr, struct c2_s1_weck *e)
++{
++    e->lap = adr[0] | (u32)adr[1] << 8 | (u32)adr[2] << 16;
++    e->sync = sync_word(e->lap);
++    e->p34_weck = (e->sync & 0x3FFFFFFFFULL) ^ 0xFFFFFFFFULL;
++    e->w = ~(u32)e->sync;
++    e->phase1 = (e->w >> 10) | (e->w << 22);
++}
++
++/* Selbsttest gegen die Beispiele der Quelle (Adresse in Anzeige-Reihenfolge, erwartetes w) */
++static const struct {
++    u8 adr[6];
++    u32 w;
++} BEISPIELE[] = {
++    {{0x55, 0x55, 0x55, 0x55, 0x55, 0x55}, 0x79F98210},
++    {{0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa}, 0xFAD69689},
++    {{0x54, 0xf7, 0x08, 0x90, 0x34, 0x25}, 0x0CB13E3F},
++    {{0xef, 0x4a, 0xc5, 0x1a, 0x00, 0xee}, 0xAF3BC02D},
++};
++
++int c2_s1_weck_selbsttest(void)
++{
++    int ok = 0;
++    for (int i = 0; i < (int)ARRAY_SIZE(BEISPIELE); i++) {
++        u8 le[6];
++        for (int k = 0; k < 6; k++) {
++            le[k] = BEISPIELE[i].adr[5 - k];
++        }
++        struct c2_s1_weck e;
++        berechnen(le, &e);
++        int t = e.w == BEISPIELE[i].w;
++        ok += t;
++        c2_log("switch1: test %02x:%02x:%02x:%02x:%02x:%02x w=%08lx %s\r\n", BEISPIELE[i].adr[0], BEISPIELE[i].adr[1],
++               BEISPIELE[i].adr[2], BEISPIELE[i].adr[3], BEISPIELE[i].adr[4], BEISPIELE[i].adr[5], e.w, t ? "OK" : "FALSCH");
++    }
++    return ok;
++}
++
++/* Gespeicherte Konsole (zuletzt gekoppelt, klassisches Bluetooth) und ihre Weckwerte ins Protokoll; 0 = keine */
++int c2_s1_weck_info(void)
++{
++    u8 adr[6];
++    if (!restore_remote_device_info_opt((bd_addr_t *)adr, 1, get_remote_dev_info_index())) {
++        c2_log("switch1: keine gekoppelte Konsole\r\n");
++        return 0;
++    }
++    struct c2_s1_weck e;
++    berechnen(adr, &e);
++    c2_log("switch1: Konsole %02x:%02x:%02x:%02x:%02x:%02x LAP %06lx Sync %08lx%08lx P34w %01lx%08lx Code %08lx "
++           "Phase1 %08lx\r\n",
++           adr[5], adr[4], adr[3], adr[2], adr[1], adr[0], e.lap, (u32)(e.sync >> 32), (u32)e.sync,
++           (u32)(e.p34_weck >> 32), (u32)e.p34_weck, e.w, e.phase1);
++    return 1;
++}
++
++/* ---------------------------------------------------------------------------------------------------------------
++ * Funkteil Phase 1–3 (Stufe 15 C1): „switch1 weck senden“.
++ *
++ * Nachbau des Werks-Ablaufs der C2-Lite-Firmware 0.04 auf demselben Chip (BR23): gleiche Registerwerte in gleicher
++ * Reihenfolge, eigener Code. Quellen (Hersteller-objdump, App-Offsets): Anlegen 0x391b2, Fortsetzen 0x3dd72,
++ * Unterbrechen 0x3de50, Empfang 0x3c8a4/0x3cc98..0x3cd20, Zeitgeber-Zustände 0x3cfa6..0x3d276, Ende 0x3945c.
++ * Bibliotheksfunktionen (btctrler.a) statt der Werks-Kopien, Zuordnung per Befehlsvergleich (STATUS.md Stufe 15 C1).
++ * Die Bedeutung einzelner Bits (format 2, eninv, Kanaltabelle, 0x1C00D0/0x1C0000) ist offen; der Versuch prüft sie
++ * gemeinsam. Phase 4 (Stufe 15 C2): nach angenommener Phase 3 Rahmen wie Werk-Zustand 5 (0x3d09a) umstellen und an
++ * create_link_connection übergeben (Gegenstück zu Werk 0x3b9ea); danach läuft der normale Verbindungsaufbau der
++ * Bibliothek (Ereignisse im RAM1-Bericht). Hinweis: pi32v2-Doppelbefehle („a # b“) lesen die alten Registerwerte (Compiler-Probe),
++ * daher z. B. wincntl 0x8010 und txphdr1 18 im Fortsetzen. */
++
++#define REG(a) (*(volatile u32 *)(a))
++#define F8(f, o) (*(volatile u8 *)((u8 *)(f) + (o)))
++#define F16(f, o) (*(volatile u16 *)((u8 *)(f) + (o)))
++#define F32(f, o) (*(volatile u32 *)((u8 *)(f) + (o)))
++
++/* struct ctrl_frame (Debug-Info der Bibliothek) */
++#define R_MISCNTL 0x0c
++#define R_RXTOG 0x0e
++#define R_TXTOG 0x0f
++#define R_WINCNTL 0x10
++#define R_RXMAXBUF 0x12
++#define R_TXFREQ 0x15
++#define R_RXFREQ 0x17
++#define R_LINKCNTL 0x20 /* [2] */
++#define R_TXPTR 0x18    /* [2], relativ zu BT_BASIS */
++#define R_RXPTR 0x1c    /* [2] */
++#define R_LMPRXPTR 0x50 /* [2] */
++#define R_TXPHDR 0x24   /* [2] */
++#define R_RXSTAT 0x28   /* [2] */
++#define R_RXPHDR 0x2c   /* [2] */
++#define R_RXCLKN 0x34   /* l, h */
++#define R_BITOFF 0x38
++#define R_RXBIT 0x3a
++#define R_BUFCNTL 0x58
++#define R_TXBUF0CNTL 0x5a
++#define R_TXBUF1CNTL 0x5b
++#define R_TXPWER 0x6c
++#define R_TXSET 0x74
++
++/* struct bredr_table bd_base: Rahmen ab +368 (je 180 Byte), letzte rx_clkn je Rahmen +3916, aktive Rahmen +3934 */
++extern u8 bd_base[];
++extern u8 bredr_link_v[]; /* +98 LT_ADDR-Belegung, +99 Zustandsbits (Werk setzt Bit 7 während des Weckens) */
++#define BD_RAHMEN(i) (bd_base + 368 + 180 * (i))
++#define BD_RXCLKN_ALT(i) (*(u32 *)(bd_base + 3916 + 4 * (i)))
++#define BD_AKTIV (*(volatile u8 *)(bd_base + 3934))
++#define BT_BASIS REG(0x1CFC44) /* Puffer müssen < 32767 Byte dahinter liegen, sonst setzt die Bibliothek zurück */
++
++void *bredr_bd_get_frame(void);
++void bredr_bd_put_frame(void *f);
++void bredr_bd_frame_enable(void *f, u8 flag, u8 set_en);
++void bredr_bd_frame_disable(void *f);
++void __write_reg_bdaddr(void *f, const u8 *addr);
++void __write_reg_bch(void *f, const u8 *bch);
++void __write_reg_format(void *f, u8 train, u8 format);
++void __write_reg_txptr(void *f, int idx, void *addr);
++void __write_reg_rxptr(void *f, int idx, void *addr);
++void __write_reg_lmprxptr(void *f, int idx, void *addr);
++void __write_reg_clkoffset(void *f, int off);
++void __write_reg_lt_addr(void *f, u8 lt);
++void bd_frame_odd_even(void *f, u8 flag);
++/* struct bredr_remote_device der Bibliothek (bredr_link.ll, 36 Byte) */
++struct bredr_remote_device_s1 {
++    u8 sr, r1, lt_addr, r3;
++    u8 addr[6];
++    u8 r10[6];
++    u8 bch[5];
++    u8 r21[3];
++    u32 clkn, clk_offset, class_dev;
++};
++_Static_assert(sizeof(struct bredr_remote_device_s1) == 36 && __builtin_offsetof(struct bredr_remote_device_s1, class_dev) == 32,
++               "bredr_remote_device");
++void *create_link_connection(void *frame, const void *remote, const u8 *local_addr, u8 role, s16 last_signed_bitoff,
++                             u8 ble_connect, u8 tws_role);
++void __clean_reg_rxfull(void *f, int idx);
++int bredr_frame_agc_set(void *f, s8 sel, s8 step);
++u32 READ_SLOT_CLK(void);
++int __get_lt_addr(void);
++void __put_lt_addr(int lt);
++int link_task_idle_disable(void);
++u8 link_idle_task_enable_detect(void);
++void link_task_add(void *task);
++void link_task_del(void *task);
++void *bt_malloc(u32 len);
++void bt_free(void *p);
++void bredr_link_rx_irq_handler(void *frame);
++void bredr_link_timeout_irq_handler(void);
++const u8 *bt_get_mac_addr(void);
++void local_irq_disable(void);
++void local_irq_enable(void);
++
++struct s1_task { /* struct link_task der Bibliothek, 28 Byte */
++    u8 sta_attribute, state, run_cnt, run_num, priority, cur_priority;
++    u16 type, run_slot, default_run_slot, interval;
++    u16 res;
++    void *entry[2];
++    const void *ops;
++};
++
++/* Kontext wie im Werk (0x78 Byte, Offsets aus 0x391b2/0x3dd72/0x3d0aa) */
++struct s1_ctx {
++    u8 agc;            /* 0x00 AGC-Index 0..5 */
++    u8 lt;             /* 0x01 eigene LT_ADDR (__get_lt_addr) */
++    u8 zustand;        /* 0x02 1 angelegt, 2 läuft, 3 unterbrochen */
++    u8 schritt;        /* 0x03 Zeitgeber-Zustand 0..5 */
++    u8 rx_schritt;     /* 0x04 0 warten auf Phase 2, 1 Phase 3 geplant */
++    u8 kanal;          /* 0x05 Index in KANAL[] */
++    u8 eigen[6];       /* 0x06 eigene BD_ADDR */
++    u8 eigen_bch[5];   /* 0x0c eigener Access Code (Parität) */
++    u8 rx[17];         /* 0x11 Phase-2-Nutzdaten */
++    u8 r22;
++    u8 tx[18];         /* 0x23 Sendepuffer: Phase 1 Weckcode W, Phase 3 eigene Adresse */
++    u8 r35;
++    u16 r36;           /* 0x36 Werk: Wert aus [0x43d4+76], hier unbenutzt */
++    u32 frist;         /* 0x38 Ende in Slots (3200 ms) */
++    struct s1_task task; /* 0x3c */
++    u8 r58[2];
++    u8 p2_lt;          /* 0x5a LT_ADDR aus Phase 2 */
++    u8 r5b;
++    u8 konsole[6];     /* 0x5c */
++    u8 konsole_bch[5]; /* 0x62 Weck-Access-Code der Konsole (untere 32 Paritätsbits invertiert) */
++    u8 r67;
++    u32 uhr;           /* 0x68 Uhr der Konsole aus Phase 2 */
++    u32 uhr_off;       /* 0x6c */
++    u32 r70;
++    void *rahmen;      /* 0x74 */
++};
++
++_Static_assert(sizeof(struct s1_task) == 28, "link_task");
++_Static_assert(__builtin_offsetof(struct s1_ctx, tx) == 0x23, "ctx tx");
++_Static_assert(__builtin_offsetof(struct s1_ctx, frist) == 0x38, "ctx frist");
++_Static_assert(__builtin_offsetof(struct s1_ctx, task) == 0x3c, "ctx task");
++_Static_assert(__builtin_offsetof(struct s1_ctx, konsole) == 0x5c, "ctx konsole");
++_Static_assert(__builtin_offsetof(struct s1_ctx, konsole_bch) == 0x62, "ctx bch");
++_Static_assert(__builtin_offsetof(struct s1_ctx, rahmen) == 0x74 && sizeof(struct s1_ctx) == 0x78, "ctx");
++
++static const u8 AGC[6] = {8, 8, 21, 21, 27, 27};  /* Werk app.bin 0x2391b */
++static const u8 KANAL[3] = {0, 0, 78};            /* Werk app.bin 0x38cac (2402, 2402, 2480 MHz) */
++#define WECK_MS 3200
++
++static struct s1_ctx *volatile s1;
++static void (*irq27_alt)(void);
++static void *volatile s1_freigeben;
++static volatile u8 s1_spiegel; /* 1 = Ereignisse nach Phase 4 in den Bericht (nur bis zum nächsten Neustart) */
++#define S1_TRENNEN 0     /* 15m: 1 = nach 2 s trennen und normal anrufen; 15o: aus */
++#define S1_OPCODE0_WEG 1 /* 16l: 1 = Opcode-0-PDUs der Switch selbst behandeln wie Werk 0x344e8 (verbrauchen + antworten) */
++static volatile u8 s1_op0, s1_op0_tid;
++ /* 16l: Bit 0 Antwort A faellig, Bit 1 Antwort B faellig; TID der PDU B */
++static u8 s1_nach;           /* 15m: 0 –, 1 warten bis P4+2 s, 2 Trennung angefordert, 3 erledigt */
++static u16 s1_nach_takte;
++static u8 *volatile s1_beob;   /* 15f: Rahmen des neuen Links, Empfänge darauf ein paar Sekunden mitschreiben */
++static volatile u8 s1_feat_ext; /* 15z: Switch hat Features/Version ausgetauscht -> dann host_connection_req */
++static u8 s1_wiederholen, s1_wiederholen_laeuft; /* „switch1 weck dauer“: verbleibende Läufe */
++static void s1_naechster(void *priv);
++
++/* Bericht (aus dem Interrupt gefüllt). Liegt im reservierten Ende von RAM1 hinter Nachlass (0x2EF80) und
++ * Absturzkopie (0x2F800..0x2FC5C), übersteht also den Neustart beim Schieberwechsel: im PC-Modus mit
++ * „switch1 weck bericht“ lesbar (im Modus Switch 1 gibt es kein USB-seriell und keinen BLE-Befehlsdienst). */
++#define RX_MERK 2
++#define EV_MERK 14
++#define L_MERK 2 /* 16n: 6 → 2, Platz für den LMP-Verlauf lmp[] */
++#define LMP_MERK 24
++#define BERICHT_MAGIC 0xC2155B10
++struct s1_bericht_t {
++    u32 magic;
++    u8 aktiv, ende;     /* ende: 1 Frist, 2 Phase 2+3 angenommen (Phase 4 gestartet), 3 Notabbruch */
++    u16 n_rx, n_takt, n_fort, n_unter, n_8f;
++    u16 n_schritt[6];
++    /* Messwerte, ändern nichts am Ablauf */
++    u16 n_irq, n_irq_rx, n_irq_takt, n_takt_fremd, n_vek_fehler;
++    u32 fort_slot, scheibe_min, scheibe_max, scheibe_summe;
++    u8 n_tasks;
++    struct {
++        u16 type, run_slot;
++        u8 sta, state, prio, eigen;
++    } task[6];
++    struct {
++        u16 rxstat, rxphdr, rxbit;
++        u8 schritt, rx_schritt, kanal;
++        u32 clkn;
++        u8 d[17];
++    } rx[RX_MERK];
++    u8 p2[17];
++    u32 p2_clkn, uhr, uhr_off;
++    u32 txpwer, txset, dauer_slots, start_slot;
++    /* Phase 4 (15e) */
++    u32 link, p4_slot;
++    u16 p4_rxbit, p4_bitoff;
++    u8 n_ev;
++    struct {
++        u8 art, ev, wert, rx;
++        u16 zeit;
++    } ev[EV_MERK];
++    /* 15f: Empfänge auf dem Link-Rahmen nach Phase 4 (nur Beobachtung) */
++    u16 n_l_rx, n_l_8f, n_l_andere, n_l_weg;
++    u16 n_lm;                /* 15q: Anzahl Pakete mit Nutzdaten; l[] hält die letzten L_MERK (Ring) */
++    u8 hcr;                  /* 0 nicht, 1 host_connection_req gesendet, 2 Verbindung nicht gefunden, 3 Rolle nicht Slave,
++                              * Weg B: 4 normaler Anruf gestartet, 5 keine Kopplung; 16j: 1 Slave→Master umgestellt,
++                              * 8 war schon Rolle 0, 9 keine Verbindung binnen 5 s, 10 Werks-Weg (16k, nichts getan); hcr_rolle = Rolle der Bibliothek */
++    u8 hcr_rolle;
++    u16 hcr_versuche;
++    u16 hcr_slot;            /* Slots nach P4 */
++    u8 nach_da, nach_anruf;  /* 15m: Weck-Link bei 2 s noch da; Anruf 1 gestartet / 2 keine Kopplung */
++    u16 nach_warte;          /* 10-ms-Takte bis der Weck-Link weg war */
++    u8 hcr_ptt;              /* 15v: Frame-miscntl vor HCR; Bit 3 = echtes PTT (lc->frame->miscntl), 0xff = kein Frame */
++    u8 lmp_aurand, lmp_sres, lmp_encreq, lmp_detach_rx, lmp_detach_tx; /* 15t */
++    /* 15x: AFH-Beobachtung */
++    u8 afh_seen, afh_mode;
++    u32 afh_instant, afh_rx_clkn;   /* Instant aus SET_AFH; RX-Uhr beim Empfang von SET_AFH */
++    u8 afh_map[10];
++    u16 rx_vor_afh, rx_nach_afh;    /* gültige RX (LLID3, len>=1) vor/nach SET_AFH */
++    u8 setupc_rx, setupc_tx, acc_rx, acc_tx, hcr_rx, hcr_tx; /* 15y/16b: Handshake-Zähler rx+tx */
++    u8 modus; /* 16b: 0 = Weck-Link, 1 = normaler Reconnect (Mithörer) */
++    u32 letzte_rx_clkn;             /* Uhr des letzten RX (beliebig) auf dem Link */
++    /* 16l: Nintendo-PDUs mit Opcode-Byte 0 wie Werk 0x344e8 (A: 00 04 00 Adresssumme → 01 04 00 00) und
++     * 0x34522 (B: 00 00 32 15 → 00 01 32 1d 00…) */
++    u8 op0_a_rx, op0_a_tx, op0_b_rx, op0_b_tx, op0_andere, op0_summe;
++    u8 op0_letzt[4];
++    u16 op0_a_slot;                 /* Slots nach P4 beim Senden der Antwort A */
++    /* 16n: LMP-Verlauf des Weck-Links (alle LLID-3-Pakete, rx und neue tx-Inhalte), Slots nach P4 */
++    u8 n_lmp;
++    struct {
++        u16 slot;
++        u8 dir_len; /* Bit 7 = von uns (tx), Bits 0..4 = Länge */
++        u8 b[5];
++    } lmp[LMP_MERK];
++    struct {
++        u16 rxstat, rxphdr, link0, link1;
++        u16 txphdr0, txphdr1;
++        u8 txtog, txb0, txb1, idx;
++        u16 clk16;  /* untere 16 Bit rx_clkn */
++        u8 rlen, tlen, rllid, tllid;
++        u8 rx[16];  /* 15x: volle LMP-Nutzlast (SET_AFH = 16 Byte) */
++        u8 tx[11];
++    } l[L_MERK];
++};
++_Static_assert(sizeof(struct s1_bericht_t) <= 0x2FF50 - 0x2FC60, "RAM1-Platz");
++#define BER (*(struct s1_bericht_t *)0x2FC60)
++static u8 s1_tx_alt[5];
++static u16 s1_tx_ph_alt;
++static void s1_lmp_merk(u8 dir, const u8 *p, u8 len, u32 clkn)
++{
++    if (BER.n_lmp >= LMP_MERK) {
++        return;
++    }
++    int k = BER.n_lmp++;
++    BER.lmp[k].slot = (u16)(clkn - BER.p4_slot);
++    BER.lmp[k].dir_len = dir | (len & 0x1f);
++    for (int i = 0; i < 5; i++) {
++        BER.lmp[k].b[i] = i < len ? p[i] : 0;
++    }
++}
++
++/* 15p: Zähler des automatischen Dauertests (übersteht den Neustart beim Schieberwechsel), 0x2FF50..0x2FF80 */
++#define AUTO_MAGIC 0xC215A701
++struct s1_auto_t {
++    u32 magic;
++    u16 versuche, p2, link, hid, frist, abbruch;
++    u16 hid_letzt_ds;  /* Zehntelsekunden vom Auslösen bis HID verbunden (letzter Erfolg) */
++    u8 n_verlauf;
++    u8 verlauf[16];    /* je Versuch: Bit0-1 ende, Bit2 host_connection_req gesendet, Bit3 HID verbunden */
++};
++_Static_assert(sizeof(struct s1_auto_t) <= 0x30, "Auto-Platz");
++#define AUTO (*(struct s1_auto_t *)0x2FF50)
++
++static void zeitgeber(u32 slots) /* Werk 0x3abd2 = SDK __timer_register */
++{
++    REG(0x1C0018) |= 0x200;
++    REG(0x1C001C) = 1;
++    while (REG(0x1C001C)) {
++    }
++    REG(0x1C00E4) = REG(0x1C0020) + slots;
++    REG(0x1C000C) |= 0x200;
++}
++
++static void zeitgeber_aus(void) /* Werk 0x3b950 */
++{
++    REG(0x1C0018) |= 0x200;
++    REG(0x1C000C) &= ~0x200;
++}
++
++static void bch_bytes(u8 *bch, const u8 *adr) /* 34 Paritätsbits als 5 Byte LE (= __get_access_addr) */
++{
++    struct c2_s1_weck e;
++    berechnen(adr, &e);
++    u64 p = e.sync & 0x3FFFFFFFFULL;
++    for (int i = 0; i < 5; i++) {
++        bch[i] = p >> (8 * i);
++    }
++}
++
++static int frist_vorbei(u32 jetzt, u32 frist) /* Werk 0x33c24 */
++{
++    if ((s32)jetzt <= (s32)frist) {
++        jetzt += 0x8000000;
++    }
++    return (s32)(jetzt - frist) < 69120000;
++}
++
++static void agc_weiter(struct s1_ctx *c, void *f) /* Werk 0x3bc22 */
++{
++    u8 i = c->agc + 1;
++    if (i > 5) {
++        i = 0;
++    }
++    c->agc = i;
++    bredr_frame_agc_set(f, 0, AGC[i]);
++}
++
++static u8 frequenz(u8 kanal) /* Werk 0x3bd32 */
++{
++    return (kanal & 1) ? (kanal >> 1) + 40 : kanal >> 1;
++}
++
++static void s1_irq(void);
++
++/* Ende wie Werk 0x3945c; läuft im Interrupt oder mit gesperrten Interrupts. Speicher gibt der App-Task frei. */
++static void s1_ende(u8 grund)
++{
++    struct s1_ctx *c = s1;
++    if (!c) {
++        return;
++    }
++    __put_lt_addr(c->lt);
++    REG(0x1C00D0) &= ~4;
++    REG(0x1C0000) &= ~0x80000;
++    REG(0x1C0000) &= ~0x10000;
++    link_task_del(&c->task); /* ruft s1_unterbrechen, wenn wir gerade laufen */
++    link_idle_task_enable_detect();
++    bredr_link_v[99] &= ~0x80;
++    if (c->rahmen) {
++        bredr_bd_put_frame(c->rahmen);
++        c->rahmen = NULL;
++    }
++    s1 = NULL;
++    s1_freigeben = c;
++    BER.ende = grund;
++    BER.aktiv = 0;
++    if (!s1_beob && ((void (**)(void))IRQ_MEM_ADDR)[IRQ_BREDR_IDX] == s1_irq && irq27_alt) {
++        ((void (**)(void))IRQ_MEM_ADDR)[IRQ_BREDR_IDX] = irq27_alt;
++    }
++}
++
++/* 15f: Beobachtung beenden (App-Task) */
++static void s1_beob_ende(void *priv)
++{
++    local_irq_disable();
++    s1_beob = NULL;
++    if (!s1 && ((void (**)(void))IRQ_MEM_ADDR)[IRQ_BREDR_IDX] == s1_irq && irq27_alt) {
++        ((void (**)(void))IRQ_MEM_ADDR)[IRQ_BREDR_IDX] = irq27_alt;
++    }
++    local_irq_enable();
++    c2_log("switch1: P4-Beobachtung Ende rx=%u 8f=%u andere=%u\r\n", BER.n_l_rx, BER.n_l_8f, BER.n_l_andere);
++}
++
++/* Fortsetzen (Werk 0x3dd72), vom Zeitplaner der Bibliothek */
++static int s1_fortsetzen(void *task)
++{
++    struct s1_ctx *c = s1;
++    void *f = c ? c->rahmen : NULL;
++    if (!f) {
++        return 0;
++    }
++    BER.n_fort++;
++    BER.fort_slot = READ_SLOT_CLK();
++    if (((void (**)(void))IRQ_MEM_ADDR)[IRQ_BREDR_IDX] != s1_irq) {
++        BER.n_vek_fehler++;
++    }
++    if (BER.n_fort == 1) {
++        /* Taskliste der Bibliothek: unser Task hängt mit entry (+0x10) in derselben Ringliste */
++        void **e = c->task.entry[0];
++        int n = 0;
++        while (e && e != (void **)c->task.entry && n < 12) {
++            struct s1_task *t = (struct s1_task *)((u8 *)e - 16);
++            if (n < 6 && (u32)t >= 0x1000 && (u32)t < 0x30000) {
++                BER.task[n].type = t->type, BER.task[n].run_slot = t->run_slot;
++                BER.task[n].sta = t->sta_attribute, BER.task[n].state = t->state, BER.task[n].prio = t->priority;
++                BER.task[n].eigen = 0;
++            }
++            n++;
++            e = (void **)e[0];
++        }
++        BER.n_tasks = n;
++    }
++    c->rx_schritt = 0;
++    c->schritt = 0;
++    __write_reg_clkoffset(f, c->uhr_off);
++    __write_reg_bdaddr(f, c->konsole);
++    __write_reg_bch(f, c->konsole_bch);
++    F8(f, R_MISCNTL) = 0;
++    F16(f, R_WINCNTL) = 0x8010;
++    F16(f, R_BITOFF) = 0x4000;
++    __write_reg_txptr(f, 0, c->tx);
++    __write_reg_txptr(f, 1, c->tx);
++    __write_reg_format(f, 0, 2);
++    F16(f, R_LINKCNTL) = 0x4004;
++    F16(f, R_LINKCNTL + 2) = 0x4004;
++    F16(f, R_TXPHDR) = 18;
++    F16(f, R_TXPHDR + 2) = 18;
++    F8(f, R_TXBUF0CNTL) &= ~1;
++    F8(f, R_TXBUF1CNTL) &= ~1;
++    c->kanal = 0;
++    REG(0x1C00D0) &= ~1;
++    REG(0x1C00D0) |= 4;
++    REG(0x1C0000) |= 0x80000;
++    REG(0x1C0000) |= 0x10000;
++    F8(f, R_RXFREQ) = 0;
++    F8(f, R_TXFREQ) = 0;
++    agc_weiter(c, f);
++    bredr_bd_frame_enable(f, 2, 1);
++    c->zustand = 2;
++    zeitgeber(64);
++    return 0;
++}
++
++/* Unterbrechen (Werk 0x3de50) */
++static int s1_unterbrechen(void *task)
++{
++    struct s1_ctx *c = s1;
++    if (!c || !c->rahmen) {
++        return 0;
++    }
++    BER.n_unter++;
++    if (BER.fort_slot) {
++        u32 d = (READ_SLOT_CLK() - BER.fort_slot) & 0x7FFFFFF;
++        if (!BER.scheibe_min || d < BER.scheibe_min) {
++            BER.scheibe_min = d;
++        }
++        if (d > BER.scheibe_max) {
++            BER.scheibe_max = d;
++        }
++        BER.scheibe_summe += d;
++    }
++    c->zustand = 3;
++    bredr_bd_frame_disable(c->rahmen);
++    REG(0x1C0000) |= 0x80000000;
++    zeitgeber_aus();
++    return 0;
++}
++
++static const struct {
++    int (*fortsetzen)(void *);
++    int (*unterbrechen)(void *);
++} S1_OPS = {s1_fortsetzen, s1_unterbrechen};
++
++/* Empfang auf unserem Rahmen (Werk 0x3c8a4..0x3c9f2, 0x3cc98..0x3cd20) */
++static void s1_empfang(struct s1_ctx *c, void *f)
++{
++    int idx = 1 & ~F8(f, R_RXTOG);
++    u16 rxstat = F16(f, R_RXSTAT + 2 * idx);
++    u16 rxphdr = F16(f, R_RXPHDR + 2 * idx);
++    u8 rs = c->rx_schritt, sch = c->schritt;
++    if (rs == 1) {
++        if (((rxstat >> 8) & 0xff) == 0x8f) {
++            c->schritt = 5;
++            zeitgeber(8);
++            BER.n_8f++;
++        }
++        c->rx_schritt = 0;
++    } else if (rs == 0) {
++        c->rx_schritt = 1;
++        u16 rxbit = F16(f, R_RXBIT) & 0x3ff;
++        int d = (int)rxbit - 83;
++        u16 clk = F16(f, R_RXCLKN);
++        u8 kanal = c->kanal;
++        u8 modus;
++        if (d < 0) {
++            F16(f, R_BITOFF) = rxbit + 542;
++            modus = clk & 1;
++        } else {
++            F16(f, R_BITOFF) = d;
++            modus = !(clk & 1);
++        }
++        bredr_bd_frame_enable(f, modus, 1);
++        if (kanal <= 1) {
++            __write_reg_clkoffset(f, 0);
++        } else if (kanal == 2) {
++            __write_reg_clkoffset(f, 0xB - READ_SLOT_CLK());
++        }
++        c->schritt = 4;
++        zeitgeber(2);
++        F16(f, R_LINKCNTL) = 0x4003;
++        F16(f, R_LINKCNTL + 2) = 0x4003;
++        F16(f, R_TXPHDR) = 99;
++        F16(f, R_TXPHDR + 2) = 99;
++        memset(c->tx, 0, sizeof(c->tx));
++        memcpy(c->tx, c->eigen, 6);
++        zeitgeber(16);
++    }
++    __clean_reg_rxfull(f, 0);
++    __clean_reg_rxfull(f, 1);
++    /* Merken erst nach dem zeitkritischen Teil */
++    if (BER.n_rx < RX_MERK) {
++        int i = BER.n_rx;
++        BER.rx[i].rxstat = rxstat, BER.rx[i].rxphdr = rxphdr, BER.rx[i].rxbit = F16(f, R_RXBIT);
++        BER.rx[i].schritt = sch, BER.rx[i].rx_schritt = rs, BER.rx[i].kanal = c->kanal;
++        BER.rx[i].clkn = F16(f, R_RXCLKN) | (u32)F16(f, R_RXCLKN + 2) << 16;
++        memcpy(BER.rx[i].d, c->rx, 17);
++    }
++    BER.n_rx++;
++}
++
++/* Zeitgeber-Zustände (Werk 0x3cfa6..0x3d276) */
++static void s1_takt(struct s1_ctx *c)
++{
++    void *f = c->rahmen;
++    u8 k = c->kanal;
++    BER.n_takt++;
++    if (c->schritt < 6) {
++        BER.n_schritt[c->schritt]++;
++    }
++    switch (c->schritt) {
++    case 0: /* nach 64 Slots Senden: 16 Slots umschalten */
++        c->schritt = 2;
++        F16(f, R_BITOFF) = 0x4000;
++        bredr_bd_frame_enable(f, 2, 1);
++        if (k <= 1) {
++            REG(0x1C0000) |= 0x80000;
++            __write_reg_clkoffset(f, 0);
++        } else if (k == 2) {
++            REG(0x1C0000) &= ~0x80000;
++            __write_reg_clkoffset(f, 0xD - READ_SLOT_CLK());
++        }
++        REG(0x1C00D0) &= ~4;
++        REG(0x1C0000) |= 0x4000000;
++        REG(0x1C0000) |= 0x80000000;
++        zeitgeber(16);
++        break;
++    case 2: /* wieder Phase 1 auf dem nächsten Kanal, 64 Slots */
++        c->schritt = 0;
++        bredr_bd_frame_enable(f, 0, 1);
++        REG(0x1C0000) |= 0x80000;
++        REG(0x1C00D0) |= 4;
++        c->rx_schritt = 0;
++        memcpy(c->tx, c->konsole_bch, 4);
++        F16(f, R_LINKCNTL) = 0x4004;
++        F16(f, R_LINKCNTL + 2) = 0x4004;
++        F16(f, R_TXPHDR) = 18;
++        F16(f, R_TXPHDR + 2) = 18;
++        k = k + 1 <= 2 ? k + 1 : 0;
++        c->kanal = k;
++        F8(f, R_RXFREQ) = frequenz(KANAL[k]);
++        F8(f, R_TXFREQ) = frequenz(KANAL[k]);
++        REG(0x1C0000) |= 0x80000000;
++        zeitgeber(64);
++        break;
++    case 4: /* Phase 3 ohne Bestätigung: zurück */
++        if (k <= 1) {
++            __write_reg_clkoffset(f, 0);
++        } else if (k == 2) {
++            __write_reg_clkoffset(f, 0xA - READ_SLOT_CLK());
++        }
++        c->schritt = 2;
++        zeitgeber(16);
++        break;
++    case 5: { /* Phase 2 + 3 angenommen: Phase 4, ACL-Verbindung wie Werk 0x3d09a..0x3d1ea */
++        u8 tog = F8(f, R_TXTOG) & 1;
++        bredr_bd_frame_disable(f);
++        zeitgeber_aus();
++        memcpy(BER.p2, c->rx, 17);
++        c->p2_lt = c->rx[0];
++        memcpy(c->konsole, c->rx + 1, 6);
++        u32 u = c->rx[13] | (u32)c->rx[14] << 8 | (u32)c->rx[15] << 16 | (u32)(c->rx[16] & 0x1f) << 24;
++        c->uhr = u >> 2;
++        BER.p2_clkn = F16(f, R_RXCLKN) | (u32)F16(f, R_RXCLKN + 2) << 16;
++        c->uhr_off = c->uhr - BER.p2_clkn;
++        F16(f, R_WINCNTL) = REG(0x1C0028);
++        u16 rxbit = F16(f, R_RXBIT);
++        u16 bitoff = (rxbit + ((rxbit & 0x3F8) >= 88 ? 936 : 537)) & 1023; /* = rxbit − 88 im 625er Slot */
++        F16(f, R_BITOFF) = bitoff;
++        if ((rxbit & 0x3F8) <= 87) {
++            c->uhr_off++;
++        }
++        BER.uhr = c->uhr, BER.uhr_off = c->uhr_off, BER.p4_rxbit = rxbit, BER.p4_bitoff = bitoff;
++        bch_bytes(c->konsole_bch, c->konsole); /* jetzt der normale Access Code der Konsole (Werk 0x33c40) */
++        __write_reg_lt_addr(f, c->p2_lt);
++        __write_reg_clkoffset(f, c->uhr_off);
++        __write_reg_bdaddr(f, c->konsole);
++        __write_reg_bch(f, c->konsole_bch);
++        __write_reg_format(f, 0, 3);
++        F16(f, R_LINKCNTL + 2 * tog) = 0x4010;
++        F16(f, R_LINKCNTL + 2 * (tog ^ 1)) = 0x4000;
++        F16(f, R_TXPHDR + 2 * tog) = 2;
++        c->zustand = 4;
++        F8(f, R_RXTOG) = 0;
++        F16(f, R_BUFCNTL) &= ~0xF00;
++        F16(f, R_BUFCNTL) = F16(f, R_BUFCNTL);
++        F16(f, R_BUFCNTL) &= ~0x20;
++        F16(f, R_BUFCNTL) |= 3;
++        F8(f, R_TXBUF0CNTL) |= 1;
++        F8(f, R_TXBUF1CNTL) |= 1;
++        c->rahmen = NULL; /* der Rahmen gehört jetzt der Verbindung */
++        REG(0x1C00D0) &= ~4;
++        REG(0x1C0000) &= ~0x80000;
++        REG(0x1C0000) &= ~0x10000;
++        REG(0x1C0000) |= 0x80000000;
++        /* Werk 0x3b9ea(frame, remote, 1, bitoff) = Bibliothek create_link_connection ohne TWS; das Werk beendet darin
++         * den Weckablauf (0x3945c) vor link_task_add, darum hier s1_ende davor. Rolle 1 wie Page-Scan (Konsole ist
++         * Central: sie vergibt LT_ADDR und Uhr). Von remote liest die Bibliothek nur sr, Adresse und class_dev. */
++        static struct bredr_remote_device_s1 rem;
++        memset(&rem, 0, sizeof(rem));
++        rem.sr = 1; /* nicht auf der Luft; Werk: ungesetztes Kontextbyte; 1 wie unser Anruf (PSRM 1) */
++        rem.lt_addr = c->p2_lt;
++        memcpy(rem.addr, c->konsole, 6);
++        rem.clkn = c->uhr, rem.clk_offset = c->uhr_off;
++        u8 ungerade = c->uhr_off & 1;
++        s16 sbitoff = (s16)F16(f, R_BITOFF);
++        s1_beob = f; /* Vektor bleibt bei s1_irq, der nur mitschreibt und weiterreicht */
++        s1_ende(2);
++        void *link = create_link_connection(f, &rem, bt_get_mac_addr(), 1, sbitoff, 0, 0);
++        BER.link = (u32)link;
++        BER.p4_slot = READ_SLOT_CLK();
++        if (!link) {
++            s1_beob = NULL;
++            if (((void (**)(void))IRQ_MEM_ADDR)[IRQ_BREDR_IDX] == s1_irq && irq27_alt) {
++                ((void (**)(void))IRQ_MEM_ADDR)[IRQ_BREDR_IDX] = irq27_alt;
++            }
++            bredr_bd_put_frame(f); /* keine Verbindung angelegt: Rahmen zurück */
++        } else {
++            bd_frame_odd_even(f, ungerade);
++            s1_spiegel = 1;
++        }
++        return;
++    }
++    default:
++        break;
++    }
++    if (c->frist && frist_vorbei(READ_SLOT_CLK(), c->frist)) {
++        s1_ende(1);
++    }
++}
++
++/* Ersatz für bredr_rx_irq_handler (IRQ 27) während des Weckens: gleicher Ablauf wie die Bibliothek, dazu unser
++ * Rahmen beim Empfang (Werk-Verteiler 0x3bdfe) und unsere Zustände beim Zeitgeber (Bit 9). */
++___interrupt static void s1_irq(void)
++{
++    BER.n_irq++;
++    if (REG(0x1C0010) & 1) {
++        REG(0x1C0018) |= 1;
++    }
++    if (REG(0x1C0010) & 2) {
++        REG(0x1C0018) |= 2;
++        BER.n_irq_rx++;
++        for (int i = 0; i < 4; i++) {
++            if (!(BD_AKTIV & (1 << i))) {
++                continue;
++            }
++            u8 *f = BD_RAHMEN(i);
++            u32 clkn = F16(f, R_RXCLKN) | (u32)F16(f, R_RXCLKN + 2) << 16;
++            if (clkn == BD_RXCLKN_ALT(i)) {
++                continue;
++            }
++            BD_RXCLKN_ALT(i) = clkn;
++            struct s1_ctx *c = s1;
++            if (c && f == c->rahmen) {
++                s1_empfang(c, f);
++            } else {
++                if (s1_beob) {
++                    if (f == s1_beob) {
++                        int idx = 1 & ~F8(f, R_RXTOG);
++                        u16 st = F16(f, R_RXSTAT + 2 * idx);
++                        u8 typ0 = F16(f, R_RXSTAT + 2 * idx) & 0xf;
++                        { /* 16n: LMP-Verlauf (nur beobachten) */
++                            u16 lph = F16(f, R_RXPHDR + 2 * idx);
++                            u8 lrl = (lph >> 3) & 0x1f;
++                            if ((st >> 8) == 0x8f && typ0 != 0 && typ0 != 1 && (lph & 3) == 3 && lrl >= 1) {
++                                s1_lmp_merk(0, (const u8 *)(BT_BASIS + F16(f, R_LMPRXPTR + 2 * idx)), lrl, clkn);
++                            }
++                            u8 ltog = F8(f, R_TXTOG) & 1;
++                            u16 ltph = F16(f, R_TXPHDR + 2 * ltog);
++                            u8 ltl = (ltph >> 3) & 0x1f;
++                            if ((ltph & 3) == 3 && ltl >= 1) {
++                                const u8 *t = (const u8 *)(BT_BASIS + F16(f, R_TXPTR + 2 * ltog));
++                                if (ltph != s1_tx_ph_alt || memcmp(t, s1_tx_alt, 5)) {
++                                    memcpy(s1_tx_alt, t, 5);
++                                    s1_tx_ph_alt = ltph;
++                                    s1_lmp_merk(0x80, t, ltl, clkn);
++                                }
++                            }
++                        }
++                        if (typ0 != 0 && typ0 != 1 && BER.n_lm < L_MERK) { /* 15y: die ERSTEN L_MERK Pakete festhalten */
++                            int k = BER.n_lm++;
++                            u16 ph = F16(f, R_RXPHDR + 2 * idx);
++                            u8 tog = F8(f, R_TXTOG) & 1;
++                            BER.l[k].rxstat = st, BER.l[k].rxphdr = ph, BER.l[k].idx = idx;
++                            BER.l[k].link0 = F16(f, R_LINKCNTL), BER.l[k].link1 = F16(f, R_LINKCNTL + 2);
++                            BER.l[k].txphdr0 = F16(f, R_TXPHDR), BER.l[k].txphdr1 = F16(f, R_TXPHDR + 2);
++                            BER.l[k].txtog = F8(f, R_TXTOG), BER.l[k].txb0 = F8(f, R_TXBUF0CNTL), BER.l[k].txb1 = F8(f, R_TXBUF1CNTL);
++                            BER.l[k].clk16 = clkn;
++                            const u8 *q = (const u8 *)(BT_BASIS + F16(f, ((ph & 3) == 3 ? R_LMPRXPTR : R_RXPTR) + 2 * idx));
++                            const u8 *t = (const u8 *)(BT_BASIS + F16(f, R_TXPTR + 2 * tog));
++                            u16 tph = (tog ? BER.l[k].txphdr1 : BER.l[k].txphdr0);
++                            u8 rl = (ph >> 3) & 0x1f, tl = (tph >> 3) & 0x1f; /* DM1: 5-Bit-Länge */
++                            u8 llid = ph & 3, tllid = tph & 3;
++                            BER.l[k].rlen = rl, BER.l[k].tlen = tl;
++                            BER.l[k].rllid = llid, BER.l[k].tllid = tllid;
++                            for (int b = 0; b < 16; b++) {
++                                BER.l[k].rx[b] = b < rl ? q[b] : 0;   /* nur gültige Bytes, kein Puffer-Rest */
++                            }
++                            for (int b = 0; b < 11; b++) {
++                                BER.l[k].tx[b] = b < tl ? t[b] : 0;
++                            }
++                            /* LMP nur bei LLID 3 und Länge ≥1; Opcode = Byte0>>1, TID = Byte0&1 */
++                            if (llid == 3 && rl >= 1) {
++                                u8 op = q[0] >> 1;
++                                if (op == 11) BER.lmp_aurand++;
++                                if (op == 12) BER.lmp_sres++;
++                                if (op == 17) BER.lmp_encreq++;
++                                if (op == 7) BER.lmp_detach_rx++;
++                            }
++                            if (tllid == 3 && tl >= 1 && (t[0] >> 1) == 7) BER.lmp_detach_tx++;
++                            if (llid == 3 && rl >= 1 && (q[0] >> 1) == 49) BER.setupc_rx++;   /* setup_complete von Switch */
++                            if (tllid == 3 && tl >= 1 && (t[0] >> 1) == 49) BER.setupc_tx++;  /* von uns */
++                            if (llid == 3 && rl >= 1 && (q[0] >> 1) == 3) BER.acc_rx++;        /* accepted von Switch */
++                            if (llid == 3 && rl >= 1 && (q[0] >> 1) == 51) BER.hcr_rx++;       /* host_connection_req von Switch */
++                            if (tllid == 3 && tl >= 1 && (t[0] >> 1) == 3) BER.acc_tx++;        /* accepted von uns */
++                            if (tllid == 3 && tl >= 1 && (t[0] >> 1) == 51) BER.hcr_tx++;       /* host_connection_req von uns */
++                            /* 15z: Switch-Features-/Version-Austausch gesehen? features_req_ext = escape3 (fe 03) */
++                            if (llid == 3 && rl >= 2 && (q[0] >> 1) == 127 && q[1] == 3) s1_feat_ext = 1;
++                            if (llid == 3 && rl >= 1 && (q[0] >> 1) == 39) s1_feat_ext = 1; /* features_req */
++                            /* 15x: AFH. SET_AFH = Opcode 60, 16 Byte: op, instant[4], mode, map[10] */
++                            if (llid == 3 && rl >= 16 && (q[0] >> 1) == 60 && !BER.afh_seen) {
++                                BER.afh_seen = 1;
++                                BER.afh_instant = q[1] | (u32)q[2] << 8 | (u32)q[3] << 16 | (u32)q[4] << 24;
++                                BER.afh_mode = q[5];
++                                for (int b = 0; b < 10; b++) BER.afh_map[b] = q[6 + b];
++                                BER.afh_rx_clkn = clkn;
++                            }
++                            if (llid == 3 && rl >= 1) {
++                                if (BER.afh_seen) BER.rx_nach_afh++; else BER.rx_vor_afh++;
++                            }
++                        }
++                        BER.n_l_rx++;
++                        BER.letzte_rx_clkn = clkn;
++                        if ((st >> 8) == 0x8f) {
++                            BER.n_l_8f++;
++                            /* 15h: LMP-PDU der Switch mit Opcode-Byte 0 (am Gerät 15g: 00 04 00 2d) nicht ablehnen.
++                             * Unsere Bibliothek antwortet sonst LMP_not_accepted (08 00 1a), danach gibt die Switch auf.
++                             * Quelle: 608/NS1-Wakeup-Demo bb_lmp.c unterdrückt genau diese Antwort (not_accepted auf
++                             * Opcode 0). Länge 0 → connection_rx_handler verwirft die PDU (__clean_reg_rxfull). */
++                            u16 ph = F16(f, R_RXPHDR + 2 * idx);
++                            u8 typ = st & 0xf;
++                            /* 16l: Werk 0x344e8 verbraucht die Opcode-0-PDUs der Switch selbst (kein not_accepted)
++                             * und antwortet; hier: der Bibliothek entziehen (Länge 0), Antwort sendet s1_hcr_takt. */
++                            if (S1_OPCODE0_WEG && (ph & 3) == 3 && ((ph >> 3) & 0x3ff) && typ != 0 && typ != 1 &&
++                                typ != 2 && typ != 9) {
++                                const u8 *q = (const u8 *)(BT_BASIS + F16(f, R_LMPRXPTR + 2 * idx));
++                                if ((q[0] & 0xfe) == 0x00) {
++                                    u8 len = (ph >> 3) & 0x1f;
++                                    memcpy(BER.op0_letzt, q, 4);
++                                    if (len >= 4 && q[1] == 4 && q[2] == 0 && q[3] == BER.op0_summe) {
++                                        BER.op0_a_rx++;
++                                        s1_op0 |= 1;
++                                    } else if (len >= 4 && q[1] == 0 && q[2] == 0x32 && q[3] == 0x15) {
++                                        BER.op0_b_rx++;
++                                        s1_op0_tid = q[0] & 1;
++                                        s1_op0 |= 2;
++                                    } else {
++                                        BER.op0_andere++;
++                                    }
++                                    F16(f, R_RXPHDR + 2 * idx) = ph & 7;
++                                    BER.n_l_weg++;
++                                }
++                            }
++                        }
++                    } else {
++                        BER.n_l_andere++;
++                    }
++                }
++                bredr_link_rx_irq_handler(f);
++            }
++        }
++    }
++    if (REG(0x1C0010) & 0x400) {
++        REG(0x1C0018) |= 0x400;
++    }
++    if (REG(0x1C0010) & 0x200) {
++        REG(0x1C0018) |= 0x200;
++        BER.n_irq_takt++;
++        bredr_link_timeout_irq_handler();
++        struct s1_ctx *c = s1;
++        if (c && c->zustand == 2) {
++            s1_takt(c);
++        } else if (c) {
++            BER.n_takt_fremd++;
++        }
++    }
++    if (REG(0x1C0010) & 0x800) {
++        REG(0x1C0018) |= 0x800;
++    }
++    if (REG(0x1C0010) & 4) {
++        REG(0x1C0018) |= 4;
++    }
++}
++
++/* Bericht ausgeben (kurz: nach einem Neustart liefert der Nachlass nur die letzten 1024 Zeichen) */
++int c2_s1_weck_bericht(void)
++{
++    if (BER.magic != BERICHT_MAGIC) {
++        c2_log("switch1: kein Weckbericht\r\n");
++        return 0;
++    }
++    static const char *const ENDE[] = {"laeuft", "Frist", "angenommen", "Notabbruch"};
++    if (AUTO.magic == AUTO_MAGIC) {
++        char z[40], *q = z;
++        for (int i = 0; i < AUTO.n_verlauf && i < 16; i++) {
++            q += sprintf(q, "%x", AUTO.verlauf[i]);
++        }
++        *q = 0;
++        c2_log("switch1: AUTO versuche=%u p2=%u link=%u HID=%u frist=%u abbruch=%u hid_letzt=%u.%us verlauf=%s\r\n",
++               AUTO.versuche, AUTO.p2, AUTO.link, AUTO.hid, AUTO.frist, AUTO.abbruch, AUTO.hid_letzt_ds / 10,
++               AUTO.hid_letzt_ds % 10, z);
++    }
++    c2_log("switch1: weck %s rx=%u 8f=%u takt=%u s0/2/4/5=%u/%u/%u/%u fort=%u unter=%u pwr=%08lx/%08lx\r\n",
++           ENDE[BER.ende < 4 ? BER.ende : 0], BER.n_rx, BER.n_8f, BER.n_takt, BER.n_schritt[0], BER.n_schritt[2], BER.n_schritt[4],
++           BER.n_schritt[5], BER.n_fort, BER.n_unter, BER.txpwer, BER.txset);
++    c2_log("switch1: mess irq=%u rx=%u takt=%u fremd=%u vek=%u scheibe=%lu..%lu summe=%lu slots tasks=%u\r\n", BER.n_irq,
++           BER.n_irq_rx, BER.n_irq_takt, BER.n_takt_fremd, BER.n_vek_fehler, BER.scheibe_min, BER.scheibe_max,
++           BER.scheibe_summe, BER.n_tasks);
++    for (int i = 0; i < BER.n_tasks && i < 6; i++) {
++        c2_log("switch1: task%d typ=%04x run_slot=%u sta=%u state=%u prio=%u\r\n", i, BER.task[i].type,
++               BER.task[i].run_slot, BER.task[i].sta, BER.task[i].state, BER.task[i].prio);
++    }
++    for (int i = 0; i < BER.n_rx && i < RX_MERK; i++) {
++        u8 *d = BER.rx[i].d;
++        c2_log("switch1: rx%d st=%04x h=%04x bit=%u clk=%07lx %u/%u k%u: %02x %02x%02x%02x%02x%02x%02x %02x%02x%02x%02x\r\n",
++               i, BER.rx[i].rxstat, BER.rx[i].rxphdr, BER.rx[i].rxbit, BER.rx[i].clkn, BER.rx[i].schritt, BER.rx[i].rx_schritt,
++               BER.rx[i].kanal, d[0], d[6], d[5], d[4], d[3], d[2], d[1], d[13], d[14], d[15], d[16]);
++    }
++    if (BER.ende == 2) {
++        u8 *d = BER.p2;
++        c2_log("switch1: P2 LT=%u Konsole %02x:%02x:%02x:%02x:%02x:%02x Uhr=%07lx clkn=%07lx Versatz=%08lx\r\n", d[0],
++               d[6], d[5], d[4], d[3], d[2], d[1], BER.uhr, BER.p2_clkn, BER.uhr_off);
++        c2_log("switch1: P4 link=%08lx slot=%07lx rxbit=%u bitoff=%u ereignisse=%u\r\n", BER.link, BER.p4_slot, BER.p4_rxbit,
++               BER.p4_bitoff, BER.n_ev);
++        for (int i = 0; i < BER.n_ev && i < EV_MERK; i += 4) {
++            char z[100], *q = z;
++            for (int k = i; k < BER.n_ev && k < EV_MERK && k < i + 4; k++) {
++                q += sprintf(q, " %c%02x/%02x@%u.%02u rx%u", BER.ev[k].art, BER.ev[k].ev, BER.ev[k].wert, BER.ev[k].zeit / 100,
++                             BER.ev[k].zeit % 100, BER.ev[k].rx);
++            }
++            c2_log("switch1: P4%s\r\n", z);
++        }
++        c2_log("switch1: P4 Link-Empfang rx=%u 8f=%u andere=%u opcode0-verworfen=%u\r\n", BER.n_l_rx, BER.n_l_8f,
++               BER.n_l_andere, BER.n_l_weg);
++        c2_log("switch1: P4 hcr=%u rolle=%u ptt=%02x au_rand=%u sres=%u enc_req=%u detach rx=%u tx=%u\r\n",
++               BER.hcr, BER.hcr_rolle, BER.hcr_ptt, BER.lmp_aurand, BER.lmp_sres, BER.lmp_encreq, BER.lmp_detach_rx,
++               BER.lmp_detach_tx);
++        c2_log("switch1: P4 op0 summe=%02x A rx=%u tx=%u @%u B rx=%u tx=%u andere=%u letzt=%02x%02x%02x%02x\r\n",
++               BER.op0_summe, BER.op0_a_rx, BER.op0_a_tx, BER.op0_a_slot, BER.op0_b_rx, BER.op0_b_tx, BER.op0_andere,
++               BER.op0_letzt[0], BER.op0_letzt[1], BER.op0_letzt[2], BER.op0_letzt[3]);
++        c2_log("switch1: P4 modus=%s handshake hcr_tx=%u hcr_rx=%u accepted_rx=%u accepted_tx=%u setupc_tx=%u setupc_rx=%u\r\n",
++               BER.modus ? "reconnect" : "weck", BER.hcr_tx, BER.hcr_rx, BER.acc_rx, BER.acc_tx, BER.setupc_tx, BER.setupc_rx);
++        c2_log("switch1: P4 AFH gesehen=%u mode=%u instant=%08lx rx_clkn=%07lx rx_vor=%u rx_nach=%u letzte_rx=%07lx "
++               "map=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\r\n", BER.afh_seen, BER.afh_mode, BER.afh_instant,
++               BER.afh_rx_clkn, BER.rx_vor_afh, BER.rx_nach_afh, BER.letzte_rx_clkn, BER.afh_map[0], BER.afh_map[1],
++               BER.afh_map[2], BER.afh_map[3], BER.afh_map[4], BER.afh_map[5], BER.afh_map[6], BER.afh_map[7],
++               BER.afh_map[8], BER.afh_map[9]);
++        for (int j = 0; j < BER.n_lm && j < L_MERK; j++) {
++            int i = j;
++            u8 *r = BER.l[i].rx, *t = BER.l[i].tx;
++            u8 rl = BER.l[i].rlen, tl = BER.l[i].tlen;
++            c2_log("switch1: L%d rx[L%u l%u op=%u tid=%u]=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x "
++                   "tx[L%u l%u op=%u tid=%u]=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x (+%d)\r\n", i,
++                   BER.l[i].rllid, rl, rl ? r[0] >> 1 : 0xff, rl ? r[0] & 1 : 0, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
++                   r[8], r[9], r[10], BER.l[i].tllid, tl, tl ? t[0] >> 1 : 0xff, tl ? t[0] & 1 : 0, t[0], t[1], t[2], t[3],
++                   t[4], t[5], t[6], t[7], t[8], t[9], t[10], (int)(u16)(BER.l[i].clk16 - (u16)BER.p4_slot));
++            if (BER.l[i].rllid == 3 && BER.l[i].rlen > 11) {
++                c2_log("switch1: L%d rx+=%02x%02x%02x%02x%02x\r\n", i, r[11], r[12], r[13], r[14], r[15]);
++            }
++        }
++        /* 16n: LMP-Verlauf, je Zeile: Richtung (S = Switch, W = wir), Slot nach P4, Länge, Bytes, Opcode/TID */
++        for (int j = 0; j < BER.n_lmp && j < LMP_MERK; j++) {
++            const u8 *b = BER.lmp[j].b;
++            c2_log("switch1: M%02d %c +%u l%u %02x%02x%02x%02x%02x op=%u tid=%u\r\n", j,
++                   (BER.lmp[j].dir_len & 0x80) ? 'W' : 'S', BER.lmp[j].slot, BER.lmp[j].dir_len & 0x1f, b[0], b[1], b[2],
++                   b[3], b[4], b[0] >> 1, b[0] & 1);
++        }
++    }
++    return 1;
++}
++
++/* 15p: automatischer Dauertest im Modus Switch 1 (aus c2_switch.c alle 10 ms). Ohne Verbindung frühestens 40 s nach
++ * dem Start und dann 60 s nach jedem Versuch oder jeder Trennung ein Weckablauf (bis zu 5 Läufe). Erfolg = HID-
++ * Verbindung binnen 30 s. Die Switch schläft mit „Automatischer Standby“ von selbst wieder ein. */
++#define S1_AUTOTEST 0 /* 16i: aus – weckte die Switch 60 s nach jedem Einschlafen erneut; Wecken nur per Home */
++int c2_s1_weck_dauer(int n);
++void c2_s1_autotest_takt(void)
++{
++    if (!S1_AUTOTEST) {
++        return;
++    }
++    static u32 t, naechster = 2000, start;
++    static u8 laeuft, neu = 1;
++    extern int c2_switch_bt_verbunden(void);
++    t++;
++    int verbunden = c2_switch_bt_verbunden();
++    if (laeuft) {
++        int busy = c2_s1_beschaeftigt();
++        if (verbunden || (!busy && t - start > 3000)) {
++            u8 v = BER.magic == BERICHT_MAGIC ? (BER.ende & 3) : 0;
++            if (BER.magic == BERICHT_MAGIC && BER.hcr == 1) {
++                v |= 4, AUTO.link++;
++            }
++            if (v == 2 || (v & 3) == 2) {
++                AUTO.p2++;
++            }
++            if ((v & 3) == 1) {
++                AUTO.frist++;
++            } else if ((v & 3) == 3) {
++                AUTO.abbruch++;
++            }
++            if (verbunden) {
++                v |= 8, AUTO.hid++;
++                AUTO.hid_letzt_ds = (t - start) / 10;
++            }
++            if (AUTO.n_verlauf < 16) {
++                AUTO.verlauf[AUTO.n_verlauf++] = v;
++            }
++            laeuft = 0;
++            naechster = t + 300; /* 15u: ohne Weck-Link schnell wieder versuchen, Listen-Fenster der Switch treffen */
++            if (v & 4) {
++                naechster = t + 0x7FFFFFF; /* nach dem ersten Weck-Link anhalten, Bericht bleibt erhalten */
++                c2_log("switch1: AUTO angehalten nach Weck-Link\r\n");
++            }
++        }
++        return;
++    }
++    if (verbunden) {
++        naechster = t + 6000; /* erst 60 s nach der Trennung wieder versuchen (Switch sicher eingeschlafen) */
++        return;
++    }
++    if ((s32)(t - naechster) < 0 || c2_s1_beschaeftigt()) {
++        return;
++    }
++    if (neu || AUTO.magic != AUTO_MAGIC) {
++        memset(&AUTO, 0, sizeof(AUTO));
++        AUTO.magic = AUTO_MAGIC;
++        neu = 0;
++    }
++    if (c2_s1_weck_dauer(5) == 0) {
++        AUTO.versuche++;
++        laeuft = 1;
++        start = t;
++        c2_log("switch1: AUTO Versuch %u\r\n", AUTO.versuche);
++    } else {
++        naechster = t + 1000;
++    }
++}
++
++
++/* c2_switch.c: kein normaler Anruf während Weckablauf (Läufe) oder Beobachtung des Weck-Links */
++int c2_s1_beschaeftigt(void)
++{
++    return s1 || s1_freigeben || s1_wiederholen_laeuft || s1_beob;
++}
++
++/* c2_switch.c: jedes Bluetooth-Ereignis nach einer Phase 4 auch in den RAM1-Bericht (übersteht den Schieberwechsel;
++ * im Modus Switch 1 gibt es kein USB-seriell). Nur Beobachtung. */
++void c2_s1_ereignis(u8 art, u8 ev, u8 wert, u8 rx, u16 zeit)
++{
++    if (!s1_spiegel || BER.magic != BERICHT_MAGIC || BER.ende != 2 || !BER.link || BER.n_ev >= EV_MERK) {
++        return;
++    }
++    int i = BER.n_ev++;
++    BER.ev[i].art = art, BER.ev[i].ev = ev, BER.ev[i].wert = wert, BER.ev[i].rx = rx, BER.ev[i].zeit = zeit;
++}
++
++/* Während des Weckens page scan und inquiry scan aus: sonst teilt der Zeitplaner unserem Task nur 32 Slots zu
++ * (am Gerät gemessen, 15c) und der 64-Slot-Zeitgeber des Werks-Ablaufs löst nie aus. Das Werk passt den Weck-Task
++ * für die leere Taskliste an (FUN_01e0a200), läuft also ohne Konkurrenz. */
++void bt_wait_phone_connect_control_ext(u8 inquiry_en, u8 page_scan_en);
++static u8 s1_scans_aus;
++
++static void s1_scans_wieder(void)
++{
++    if (s1_scans_aus && BER.ende == 2 && BER.link) {
++        /* Phase 4 hat eine Verbindung angelegt: die App schaltet die Scans beim Verbinden aus und beim Trennen
++         * wieder ein (app_comm_edr.c), also hier nichts tun */
++        s1_scans_aus = 0;
++        c2_log("switch1: Phase 4, Scans bleiben bei der App\r\n");
++        return;
++    }
++    if (s1_scans_aus) {
++        s1_scans_aus = 0;
++        bt_wait_phone_connect_control_ext(1, 1);
++        c2_log("switch1: Scans wieder an\r\n");
++    }
++}
++
++/* 15i: Nach Phase 4 sendet der C2 Lite als Peripheral selbst LMP_host_connection_req (Opcode 51). Quelle:
++ * 608/NS1-Wakeup-Demo bb_handoff.c – beim Linkstart stößt der Nachbau sofort LMP_host_connection_req an; Kommentar:
++ * „Die Switch sendet kein LMP, bis sie diese PDU empfängt“, sie antwortet mit derselben PDU. Unsere Bibliothek wartet
++ * als Slave nur auf die der Konsole (am Gerät 15h: danach nur POLL, Abbruch nach ~110 ms).
++ * Bibliothek: lmp_request(conn, Format, Opcode<<1, …) wie lmp_tx_version_req (74 = 37<<1); Format "l" = 1 Byte;
++ * lmp_request setzt bei Rolle Slave (conn+138 == 1) das TID-Bit selbst → 0x67. Verbindung über Handle
++ * (lmp_private_handler_for_remote_addr wie c2_switch.c, dann lmp_conn_for_handle); Prüfung conn+220 == unser Link. */
++u16 lmp_private_handler_for_remote_addr(u8 *addr, int link_type);
++void *lmp_conn_for_handle(u16 handle);
++/* SDK-Helfer setzt den lokalen HCR-Pending-Zustand (conn->state|=1) vor dem Senden. */
++/* 16g: HCR nicht mehr von Hand – die Bibliothek legt die Verbindung an (lmp_event_handler) */
++static u16 s1_hcr_timer;
++
++static void s1_hcr_takt(void *priv)
++{
++    if (BER.magic != BERICHT_MAGIC) {
++        goto ende;
++    }
++    if (BER.hcr == 1) {
++        return; /* 15s: gesendet, warten – die Switch treibt Auth/Verschlüsselung, HID öffnet c2_switch.c */
++    }
++    BER.hcr_versuche++;
++    if (BER.ende == 2 && BER.link) {
++        /* 16g WERKS-WEG: Die LMP-Verbindung wie die Werks-Firmware über die Bibliothek anlegen, NICHT die HCR von
++         * Hand senden. Werk: NS1-IRQ Zustand 5 ruft FUN_01e3baaa, das den Linktask baut und intern das Ereignis
++         * 0x400001 postet; dessen Handler FUN_01e36f98 ruft lmp_connection_start(link, role=0 = Initiator). Die
++         * Bibliotheks-Verbindungsmaschine sendet dann HCR in der richtigen Reihenfolge, verarbeitet accepted,
++         * sendet setup_complete und fährt Authentifizierung/Verschlüsselung selbst. SDK: lmp_event_handler({link,
++         * 1, 0}) ruft genau dieses lmp_connection_start. */
++        /* 16j: create_link_connection stellt selbst LMP_EVENT {link, 1, role=1} in die Bibliotheks-Warteschlange
++         * (bredr_link.c.ll, Ende von create_link_connection) → lmp_connection_start(link, 1) = Slave-Maschine, die nur
++         * wartet. lmp_acl_link hat Platz für genau EINE Verbindung (nm: 0x118 = 280 Byte = 1 lmp_connection), und
++         * lmp_connection_start prüft nicht auf Bestehendes. 16g rief lmp_event_handler({link,1,0}) im 10-ms-Takt:
++         * gewann der Takt, scheiterte das Nachzügler-Ereignis (lmp_create_conn NULL → Assert/Reset); gewann die
++         * Bibliothek, blieb Slave (hcr=7, am 2.11. 6 von 6). Jetzt: auf die Verbindung der Bibliothek warten und sie
++         * mit deren eigenem Rolle-0-Zweig (wie lmp_connection_start bei role==0) zur Master-Maschine machen. */
++        extern void c2_switch_weck_link(void);
++        extern void *lmp_conn_for_link(void *link);
++        extern void lmp_role_machine_handler_register(void *conn, void *handle);
++        extern int lmp_master_machine(void *conn, void *rx, void *hci_cmd);
++        extern void lmp_master_init(void *conn);
++        u8 *conn = lmp_conn_for_link((void *)BER.link);
++        if (!conn) {
++            if (BER.hcr_versuche < 500) {
++                return; /* Ereignis der Bibliothek noch nicht verarbeitet */
++            }
++            BER.hcr = 9; /* binnen 5 s keine Verbindung angelegt */
++            goto ende;
++        }
++        BER.hcr_rolle = conn[138]; /* lmp_connection.core.role (IR: Feld 28.2; 15i: conn+138 == 1 Slave) */
++#if 0
++        /* 16j: Umstellung auf Rolle 0 – am Gerät widerlegt (TID 0 → Switch: not_accepted 0x24). Werk tut das nicht:
++         * 0x3b9ea postet {link,1,1}, Handler 0x36ed8 startet die Slave-Maschine (objdump, STATUS 16j). */
++        if (conn[138] == 1) {
++            conn[138] = 0;
++            lmp_role_machine_handler_register(conn, (void *)lmp_master_machine);
++            lmp_master_init(conn);
++        }
++#endif
++        (void)lmp_role_machine_handler_register, (void)lmp_master_machine, (void)lmp_master_init;
++        if (BER.hcr != 10) {
++            BER.hcr = 10; /* 16k Werks-Weg: Bibliothek fährt die Slave-Maschine wie das Werk */
++            BER.hcr_slot = READ_SLOT_CLK() - BER.p4_slot;
++            c2_switch_weck_link(); /* HID nach der (Switch-getriebenen) Verschlüsselung */
++        }
++        /* 16l: Antworten auf die Opcode-0-PDUs wie Werk 0x3451c (lmp_request, TID nach Rolle) und 0x34e4e
++         * (lmp_response, TID der empfangenen PDU = lmp_connection.tran_id, SDK-Feld 1) */
++        extern int lmp_request(void *conn, const char *format, ...);
++        extern int lmp_response(void *conn, const char *format, ...);
++        u8 faellig = s1_op0;
++        if (faellig & 1) {
++            s1_op0 &= ~1;
++            lmp_request(conn, "1111", 0x01, 0x04, 0x00, 0x00);
++            BER.op0_a_tx++;
++            BER.op0_a_slot = READ_SLOT_CLK() - BER.p4_slot;
++        }
++        if (faellig & 2) {
++            s1_op0 &= ~2;
++            conn[1] = s1_op0_tid;
++            lmp_response(conn, "1111111111", 0x00, 0x01, 0x32, 0x1d, 0, 0, 0, 0, 0, 0);
++            BER.op0_b_tx++;
++        }
++        if (BER.hcr_versuche < 800) {
++            return; /* bis 8 s nach dem Weckstart weiter auf Opcode-0-PDUs der Switch achten */
++        }
++        goto ende;
++    }
++    if (BER.hcr_versuche < 500) {
++        return;
++    }
++ende:
++    if (s1_hcr_timer) {
++        sys_timer_del(s1_hcr_timer);
++        s1_hcr_timer = 0;
++    }
++}
++
++static void s1_bericht(void *priv)
++{
++    if (BER.aktiv) { /* Notbremse: die Frist hätte längst greifen müssen */
++        local_irq_disable();
++        s1_ende(3);
++        local_irq_enable();
++    }
++    if (s1_freigeben) {
++        bt_free(s1_freigeben);
++        s1_freigeben = NULL;
++    }
++    c2_s1_weck_bericht();
++    if (s1_beob) {
++        sys_timeout_add(NULL, s1_beob_ende, 5000);
++    }
++    if (s1_wiederholen && BER.ende != 2) {
++        s1_wiederholen--;
++        s1_wiederholen_laeuft = 1;
++        sys_timeout_add(NULL, s1_naechster, 300);
++    } else {
++        s1_wiederholen = 0;
++        s1_wiederholen_laeuft = 0;
++        s1_scans_wieder();
++    }
++}
++
++static void s1_naechster(void *priv)
++{
++    if (!s1_wiederholen_laeuft) {
++        s1_scans_wieder();
++        return;
++    }
++    int r = c2_s1_weck_senden();
++    if (r) {
++        c2_log("switch1: weck Start fehlgeschlagen (%d)\r\n", r);
++        s1_wiederholen = 0;
++        s1_wiederholen_laeuft = 0;
++        s1_scans_wieder();
++    }
++}
++
++/* Start für Befehl und Kamera+Home: Scans aus, nach 200 ms bis zu n Läufe zu 3,2 s, bis Phase 2+3 angenommen sind
++ * (höchstens 20), danach Scans wieder an. */
++int c2_s1_weck_dauer(int n)
++{
++    if (n < 1) {
++        n = 1;
++    }
++    if (n > 20) {
++        n = 20;
++    }
++    if (s1 || s1_freigeben || s1_wiederholen_laeuft) {
++        return -16;
++    }
++    s1_wiederholen = n - 1;
++    s1_wiederholen_laeuft = 1;
++    s1_scans_aus = 1;
++    user_send_cmd_prepare(USER_CTRL_PAGE_CANCEL, 0, NULL); /* laufenden normalen Anruf abbrechen */
++    bt_wait_phone_connect_control_ext(0, 0);
++    sys_timeout_add(NULL, s1_naechster, 200);
++    return 0;
++}
++
++void c2_s1_weck_stopp(void)
++{
++    s1_wiederholen = 0;
++    if (!s1 && !BER.aktiv) {
++        s1_wiederholen_laeuft = 0;
++    }
++}
++
++/* Start wie Werk 0x391b2 (link_rand_page_enable(Konsole, 3200 ms)). Rückgabe 0 = läuft, sonst Fehler. */
++int c2_s1_weck_senden(void)
++{
++    u8 konsole[6];
++    if (s1 || s1_freigeben) {
++        return -16;
++    }
++    if (!restore_remote_device_info_opt((bd_addr_t *)konsole, 1, get_remote_dev_info_index())) {
++        return -2;
++    }
++    /* Klassisches Basisband eingerichtet? bredr_bd_init setzt die Basis auf bd_base. Sonst würde
++     * bredr_bd_frame_enable die CPU zurücksetzen (Bereichsprüfung gegen die Basis). */
++    if (BT_BASIS != (u32)bd_base) {
++        return -19;
++    }
++    void *f = bredr_bd_get_frame();
++    if (!f) {
++        return -12;
++    }
++    struct s1_ctx *c = bt_malloc(sizeof(struct s1_ctx));
++    if (!c) {
++        bredr_bd_put_frame(f);
++        return -12;
++    }
++    if ((u32)c - BT_BASIS >= 32767 - sizeof(struct s1_ctx)) {
++        bt_free(c);
++        bredr_bd_put_frame(f);
++        return -22;
++    }
++    memset(c, 0, sizeof(*c));
++    if (s1_beob) {
++        return -16; /* Beobachtung des letzten Links läuft noch */
++    }
++    extern u8 c2_switch_weck_link_aktiv;
++    c2_switch_weck_link_aktiv = 0; /* 15r: sauberer Zustand je Versuch */
++    s1_feat_ext = 0;
++    s1_spiegel = 0;
++    memset(&BER, 0, sizeof(BER));
++    BER.magic = BERICHT_MAGIC;
++    /* Werks-Rahmenvorgaben (0x38e60, 0x38e84) und Leistung Index 4 (0x38dc4: TXPWER/TXSET aus der Werks-Tabelle) */
++    F16(f, R_RXMAXBUF) = 1021;
++    F16(f, R_BUFCNTL) = 0x206c;
++    F32(f, R_TXPWER) = 0x007022d9;
++    F32(f, R_TXSET) = 0x00ffffc2;
++    BER.txpwer = F32(f, R_TXPWER), BER.txset = F32(f, R_TXSET);
++    __write_reg_lmprxptr(f, 0, c->rx);
++    __write_reg_lmprxptr(f, 1, c->rx);
++    __write_reg_rxptr(f, 0, c->rx);
++    __write_reg_rxptr(f, 1, c->rx);
++    memcpy(c->konsole, konsole, 6);
++    memcpy(c->eigen, bt_get_mac_addr(), 6);
++    /* 16l: Werk 0x33bca legt in hci_param+114 die Bytesumme der eigenen Adresse ab; Werk 0x34500 vergleicht damit
++     * Byte 3 der Switch-PDU 00 04 00 xx (am Gerät 16a/16i/16k: xx = 0x2d = Summe unserer Adresse) */
++    s1_op0 = 0;
++    s1_tx_ph_alt = 0;
++    memset(s1_tx_alt, 0, sizeof(s1_tx_alt));
++    BER.op0_summe = 0;
++    for (int i = 0; i < 6; i++) {
++        BER.op0_summe += c->eigen[i];
++    }
++    bch_bytes(c->konsole_bch, c->konsole);
++    bch_bytes(c->eigen_bch, c->eigen);
++    for (int i = 0; i < 4; i++) {
++        c->konsole_bch[i] = ~c->konsole_bch[i];
++    }
++    c->schritt = 0;
++    c->lt = __get_lt_addr();
++    c->rahmen = f;
++    c->zustand = 1;
++    memcpy(c->tx, c->konsole_bch, 4);
++    BER.start_slot = READ_SLOT_CLK();
++    BER.dauer_slots = WECK_MS * 1000 / 625;
++    c->frist = (BER.start_slot + BER.dauer_slots) & 0x7FFFFFF;
++    bredr_link_v[99] |= 0x80;
++    c->task.type = 0x200;
++    c->task.run_slot = 100;
++    c->task.run_num = 1;
++    c->task.priority = 1;
++    c->task.ops = &S1_OPS;
++    c->task.sta_attribute = 1;
++    BER.aktiv = 1;
++    local_irq_disable();
++    s1 = c;
++    void (**vek)(void) = (void (**)(void))IRQ_MEM_ADDR;
++    irq27_alt = vek[IRQ_BREDR_IDX];
++    vek[IRQ_BREDR_IDX] = s1_irq;
++    local_irq_enable();
++    link_task_idle_disable();
++    link_task_add(&c->task);
++    c2_log("switch1: weck senden an %02x:%02x:%02x:%02x:%02x:%02x Weck-BCH %02x%02x%02x%02x%02x lt=%u rahmen=%08lx "
++           "ctx=%08lx basis=%08lx slot=%07lx\r\n",
++           konsole[5], konsole[4], konsole[3], konsole[2], konsole[1], konsole[0], c->konsole_bch[4],
++           c->konsole_bch[3], c->konsole_bch[2], c->konsole_bch[1], c->konsole_bch[0], c->lt, (u32)f, (u32)c,
++           BT_BASIS, BER.start_slot);
++    sys_timeout_add(NULL, s1_bericht, WECK_MS + 800);
++    if (!s1_hcr_timer) {
++        s1_hcr_timer = sys_timer_add(NULL, s1_hcr_takt, 10);
++    }
++    return 0;
++}
++
++/* Home ohne Verbindung im Modus Switch 1 (c2_switch.c, höchstens alle 3 s): derselbe Weckablauf wie Kamera + Home,
++ * bis zu 5 Läufe, Ende bei angenommener Phase 3. Danach ruft c2_switch.c eine wache Switch wieder normal an. */
++void c2_s1_wecken(void)
++{
++    int r = c2_s1_weck_dauer(5);
++    c2_log("switch1: Home -> weck senden %d\r\n", r);
++}
++
++#else
++
++int c2_s1_weck_selbsttest(void)
++{
++    return 0;
++}
++
++int c2_s1_weck_info(void)
++{
++    return 0;
++}
++
++void c2_s1_wecken(void)
++{
++}
++
++int c2_s1_weck_senden(void)
++{
++    return -1;
++}
++
++int c2_s1_weck_bericht(void)
++{
++    return 0;
++}
++
++int c2_s1_weck_dauer(int n)
++{
++    return -1;
++}
++
++void c2_s1_weck_stopp(void)
++{
++}
++
++void c2_s1_ereignis(u8 art, u8 ev, u8 wert, u8 rx, u16 zeit)
++{
++}
++
++int c2_s1_beschaeftigt(void)
++{
++    return 0;
++}
++
++
++void c2_s1_autotest_takt(void)
++{
++}
 +
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_xinput.c b/apps/hid/modules/c2lite/c2_xinput.c

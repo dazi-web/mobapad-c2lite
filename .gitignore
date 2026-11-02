@@ -16,6 +16,7 @@
 !/docs/
 /docs/*
 !/docs/*.md
+/docs/SWITCH1-GRUNDGERUEST.md
 !/docs/bilder/
 /docs/bilder/*
 !/docs/bilder/*.png
