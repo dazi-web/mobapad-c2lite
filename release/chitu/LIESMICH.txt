@@ -1,4 +1,4 @@
-Chitu 2 HD Custom, Stand chitu-CRd (Firmware für den Mobapad Chitu 2 HD) – EXPERIMENTELL
+Chitu 2 HD Custom, Stand chitu-CRf (Firmware für den Mobapad Chitu 2 HD) – EXPERIMENTELL
 
 jl_isd.bin          Erstinstallation von der Werks-Firmware, nur über das USB-Kabel:
                     c2lite-custom installieren release/chitu/jl_isd.bin --usb
@@ -8,10 +8,14 @@ SHA256SUMS          Prüfsummen: sha256sum -c SHA256SUMS
 
 Das Werkzeug prüft vor dem Schreiben, ob Firmware und Controller zusammenpassen (Chitu-Firmware nie auf den C2 Lite
 und umgekehrt). Rückweg zur Werks-Firmware: c2lite-custom werk-zurueck <Sicherung aus ~/c2lite-sicherung>.
-Vorher den Abschnitt „Chitu 2 HD“ und „Risiken“ in der README lesen. Nutzung auf eigenes Risiko.
+Musik und Vibration belasten Motoren und Akku; die Firmware begrenzt Pegel (50 %) und Dauer (30 s am Stück),
+Schäden sind trotzdem möglich. Vorher den Abschnitt „Chitu 2 HD“ und „Risiken“ in der README lesen.
+Nutzung auf eigenes Risiko.
 
 English: EXPERIMENTAL firmware for the Mobapad Chitu 2 HD. jl_isd.bin = first install from the factory firmware over
 USB only (`c2lite-custom installieren release/chitu/jl_isd.bin --usb`: unplug, switch on with Home, plug in, hold
 Home + Y + X while it rumbles); db_update_data.bin = update (`c2lite-custom update release/chitu/db_update_data.bin`).
 The tool refuses to write firmware meant for the other controller. Way back: `c2lite-custom werk-zurueck <backup>`.
-Check with `sha256sum -c SHA256SUMS`. Read the "Chitu 2 HD" and "Risks" sections in the README first. Use at your own risk.
+Music and vibration stress the motors and battery; the firmware limits level (50 %) and duration (30 s in a row),
+damage is still possible. Check with `sha256sum -c SHA256SUMS`. Read the "Chitu 2 HD" and "Risks" sections in the
+README first. Use at your own risk.

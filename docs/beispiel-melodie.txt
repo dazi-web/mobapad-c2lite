@@ -1,4 +1,4 @@
-# Beispielmelodie für c2lite-custom musik (Chitu 2 HD) – eigene Komposition, frei verwendbar (Apache-2.0 wie das Repo).
+# Beispielmelodie (eigene Komposition, Apache-2.0). Für c2lite-custom musik am Chitu 2 HD.
 # Format: Ton[:ms], Ton = Name+Oktave (C4, F#4, Bb3, H3 = B3) oder Hz, P = Pause, # = Kommentar (am Zeilenanfang
 # oder nach Leerzeichen). Ohne :ms gilt die Dauer der vorigen Note. Abspielen:
 #   c2lite-custom musik docs/beispiel-melodie.txt            (Vorgabe: Pegel 40 %, Abstand 30 ms)

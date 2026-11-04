@@ -41,6 +41,8 @@ pub enum Auftrag {
     WeckenEinrichten(Arc<AtomicBool>),
     /// Musik am Chitu: Befehle in die Warteschlange der Firmware; das Flag bricht ab (dann „chitu ton stop“)
     Musik(Vec<String>, Arc<AtomicBool>),
+    /// Befehl ohne auf Antwort zu warten (Klavier, „chitu live …“)
+    Schicken(String),
 }
 
 pub enum Meldung {
@@ -211,6 +213,16 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     });
                     senden(Meldung::WeckenFertig(r));
                 }
+                Ok(Auftrag::Schicken(b)) => {
+                    if let Some(k) = kanal.as_mut() {
+                        k.ablesen();
+                        if let Err(e) = k.schicken(&b) {
+                            if kanal_weg == Weg::Usb && geraet::ist_verbindungsfehler(&e) && !usb_neu(&mut kanal, &senden) {
+                                senden(Meldung::Getrennt(Some(VERBINDUNG_WEG.into())));
+                            }
+                        }
+                    }
+                }
                 Ok(Auftrag::Musik(befehle, abbruch)) => {
                     let Some(k) = kanal.as_mut() else {
                         senden(Meldung::MusikGesendet(Err("Nicht verbunden".into())));
@@ -227,6 +239,11 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     senden(Meldung::MusikGesendet(r));
                 }
                 Err(RecvTimeoutError::Timeout) => {
+                    if !live {
+                        if let Some(k) = kanal.as_mut() {
+                            k.ablesen(); /* Port offen halten heißt auch abholen, sonst hängt die Firmware beim Senden */
+                        }
+                    }
                     if letzte_pruefung.elapsed() >= Duration::from_secs(2) {
                         letzte_pruefung = Instant::now();
                         if usb_weg(&kanal, kanal_weg) || (kanal_weg == Weg::Usb && kanal.as_deref().is_some_and(usb_anderer)) {

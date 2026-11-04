@@ -79,12 +79,13 @@ Working (tested on one unit):
 - PC: Xbox controller over USB (Linux without kernel parameter) and Bluetooth LE, all buttons, both sticks,
   L2/R2 digital (as with the factory firmware)
 - Rumble from games on both linear motors (left motor 160 Hz, right 320 Hz, as with the factory firmware)
-- Melodies on the motors: `c2lite-custom musik <file>` or the "Musik" page in the program (note format below)
+- Melodies on the motors: `c2lite-custom musik <file>` or the "Musik" page in the program (note format below),
+  which also has a piano (mouse or keyboard, recording to a note file)
 - Updates over the USB cable, way back to the factory firmware
 
-Missing so far: Switch / Switch 2, lights (logo, player LEDs), motion sensor, NFC. Known: a rare restart by the
-watchdog (the controller is back after ~4 s); the cause is being investigated, the program saves the log to
-`~/.cache/c2lite-custom/`.
+Missing so far: Switch / Switch 2, lights (logo, player LEDs), motion sensor, NFC. Fixed (version chitu-CRf): watchdog
+restarts when the program sent commands but did not read the controller's output. If the controller still restarts,
+the program saves the log to `~/.cache/c2lite-custom/`.
 
 Install (Linux only, USB cable only):
 
@@ -103,6 +104,12 @@ cable. When it rumbles in a rhythm, hold Home + Y + X until the rumbling stops. 
   (so far this guard has only been triggered on the C2 Lite with the same firmware).
 - With a C2 Lite and a Chitu plugged in at the same time, the command line asks for `--port`; the program window has a
   selector at the bottom left.
+
+![The "Musik" page with piano and list of pieces (Chitu 2 HD)](docs/bilder/musik.png)
+
+**Note on music and vibration:** Long or loud tones stress the motors, the mechanics and the battery more than normal
+rumble. The firmware limits the level (50 %) and the duration (30 s in a row); whether that is enough for every unit is
+not verified. Damage to the motors or the controller is possible; use at your own risk.
 
 Note format for `musik`: name + octave (`A3`, `C#4`, `H3` = B3) or a frequency in Hz, duration `:ms`, rest `P`,
 comment `#`, e.g. [`docs/beispiel-melodie.txt`](docs/beispiel-melodie.txt). It sounds clearest between about 250 and

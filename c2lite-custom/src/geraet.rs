@@ -22,6 +22,18 @@ pub trait Kanal {
     fn usb_ziel(&self) -> Option<std::path::PathBuf> {
         None
     }
+    /// Befehl senden, ohne auf die Antwort zu warten (Klavier: „chitu live …“ antwortet mit „live:“, das andere Befehle
+    /// beim Lesen überspringen). Standard: senden mit sehr kurzer Wartezeit.
+    fn schicken(&mut self, befehl: &str) -> Result<(), String> {
+        // Bei Erfolg antwortet die Firmware nicht (chitu live ab CRe): kurz senden, Zeitablauf ist kein Fehler
+        match self.befehl(befehl, &["live:"], Duration::from_millis(20)) {
+            Err(e) if crate::geraet::ist_verbindungsfehler(&e) => Err(e),
+            _ => Ok(()),
+        }
+    }
+    /// Alles abholen, was der Controller inzwischen geschrieben hat, ohne zu warten. Liest niemand den offenen Port, läuft
+    /// der Puffer am PC voll und die Firmware hängt beim Senden (Watchdog-Neustart, Chitu 4.11.: Spur app=0x42).
+    fn ablesen(&mut self) {}
     /// Beim Öffnen gesicherter Nachlass eines abgestürzten Laufs (nur einmal abholbar)
     fn nachlass_datei(&mut self) -> Option<std::path::PathBuf> {
         None
@@ -199,6 +211,20 @@ impl Kanal for Geraet {
 
     fn nachlass_datei(&mut self) -> Option<std::path::PathBuf> {
         self.nachlass.take()
+    }
+
+    fn schicken(&mut self, befehl: &str) -> Result<(), String> {
+        self.schreiben(befehl)
+    }
+
+    fn ablesen(&mut self) {
+        for _ in 0..64 {
+            let warten = self.port.get_ref().bytes_to_read().unwrap_or(0) > 0 || !self.port.buffer().is_empty();
+            if !warten {
+                break;
+            }
+            let _ = self.zeile();
+        }
     }
 
     /// Schickt einen Befehl und wartet auf die erste Zeile, die eines der Präfixe enthält. Gibt den Text ab dem

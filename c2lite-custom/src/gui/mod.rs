@@ -137,6 +137,11 @@ struct Musik {
     abstand: u32,
     /// läuft: Titel, Start, Dauer in s, Abbruch-Flag
     laeuft: Option<(String, Instant, f64, Arc<AtomicBool>)>,
+    /// Klavier: klingende Note (MIDI-Nummer) und letzte Erneuerung; Grundoktave; Aufnahme (Start, Ereignisse)
+    klavier_note: Option<u8>,
+    klavier_gesendet: Option<Instant>,
+    klavier_oktave: i32,
+    aufnahme: Option<(Instant, Vec<(Option<u8>, Instant)>)>,
 }
 
 impl Default for Musik {
@@ -152,8 +157,59 @@ impl Default for Musik {
             kanal: "lr",
             abstand: 30,
             laeuft: None,
+            klavier_note: None,
+            klavier_gesendet: None,
+            klavier_oktave: 4,
+            aufnahme: None,
         }
     }
+}
+
+/// MIDI-Nummer → Frequenz (A4 = 69 = 440 Hz)
+fn midi_hz(n: u8) -> f64 {
+    440.0 * 2f64.powf((n as f64 - 69.0) / 12.0)
+}
+
+/// MIDI-Nummer → Notenname wie im Notenformat (B = H)
+fn midi_name(n: u8) -> String {
+    const N: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    format!("{}{}", N[(n % 12) as usize], n as i32 / 12 - 1)
+}
+
+/// Aufnahme → Notendatei: Ereignisse (Note an/aus mit Zeitpunkt) zu Tönen und Pausen in ms
+fn aufnahme_text(start: Instant, ereignisse: &[(Option<u8>, Instant)], ende: Instant) -> String {
+    let mut t = format!("# Aufnahme mit dem Klavier in c2lite-custom ({}) – eigenes Spiel\n", jetzt_text());
+    let mut zeit = start;
+    let mut note: Option<u8> = None;
+    let mut zeile = String::new();
+    let mut schreiben = |note: Option<u8>, ms: u128, zeile: &mut String| {
+        if ms < 20 {
+            return;
+        }
+        let ms = ms.min(3000);
+        zeile.push_str(&match note {
+            Some(n) => format!("{}:{} ", midi_name(n), ms),
+            None => format!("P:{} ", ms),
+        });
+        if zeile.len() > 90 {
+            t.push_str(zeile.trim_end());
+            t.push('\n');
+            zeile.clear();
+        }
+    };
+    for (n, z) in ereignisse.iter().chain(std::iter::once(&(None, ende))) {
+        schreiben(note, z.duration_since(zeit).as_millis(), &mut zeile);
+        note = *n;
+        zeit = *z;
+    }
+    t.push_str(zeile.trim_end());
+    t.push('\n');
+    t
+}
+
+fn jetzt_text() -> String {
+    let s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    format!("{s}")
 }
 
 /// Gemerkter Ordner: ~/.config/c2lite-custom/musik-ordner (eine Zeile mit dem Pfad)
@@ -166,6 +222,10 @@ fn musik_ordner_datei() -> Option<PathBuf> {
 }
 
 fn musik_ordner_lesen() -> Option<PathBuf> {
+    // C2LITE_MUSIK_ORDNER legt den Ordner fest (z. B. für Bildschirmfotos nur mit der Beispielmelodie)
+    if let Some(o) = std::env::var_os("C2LITE_MUSIK_ORDNER") {
+        return Some(PathBuf::from(o));
+    }
     let p = PathBuf::from(std::fs::read_to_string(musik_ordner_datei()?).ok()?.trim());
     p.is_dir().then_some(p)
 }
@@ -1593,8 +1653,147 @@ impl App {
         });
     }
 
+    /// Klavier: zwei Oktaven, Maus oder Tastatur (weiß A S D F G H J K L, schwarz W E T Z U O), Pfeile = Oktave.
+    /// Einstimmig; gehaltener Ton über „chitu live …“ (Firmware ab chitu-CRe), alle 100 ms erneuert.
+    fn klavier(&mut self, ui: &mut egui::Ui) {
+        let c = farben(ui.ctx());
+        let mut gedrueckt: Option<u8> = None;
+        karte(ui, |ui| {
+            ui.horizontal(|ui| {
+                titel(ui, "Klavier");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let aufnahme = self.musik.aufnahme.is_some();
+                    let text = if aufnahme { format!("{}  {}", icon::STOP, t("Aufnahme beenden")) } else { format!("{}  {}", icon::RECORD, t("Aufnehmen")) };
+                    if ui.add(stil::wahl(aufnahme, &text)).clicked() {
+                        if let Some((start, ereignisse)) = self.musik.aufnahme.take() {
+                            self.aufnahme_speichern(start, &ereignisse);
+                        } else {
+                            self.musik.aufnahme = Some((Instant::now(), Vec::new()));
+                        }
+                    }
+                    if ui.button(icon::CARET_RIGHT).on_hover_text(t("Oktave höher")).clicked() && self.musik.klavier_oktave < 5 {
+                        self.musik.klavier_oktave += 1;
+                    }
+                    ui.label(tr("Oktave {}", &[&self.musik.klavier_oktave]));
+                    if ui.button(icon::CARET_LEFT).on_hover_text(t("Oktave tiefer")).clicked() && self.musik.klavier_oktave > 2 {
+                        self.musik.klavier_oktave -= 1;
+                    }
+                });
+            });
+            hinweis(ui, "Maus oder Tastatur: weiße Tasten A S D F G H J K L, schwarze W E T Z U O, Pfeile ← → wechseln die Oktave. Braucht Firmware ab chitu-CRe.");
+            ui.add_space(8.0);
+            let basis = ((self.musik.klavier_oktave + 1) * 12) as u8; // C der Grundoktave
+            // Tastatur
+            const WEISS: [(egui::Key, u8); 9] = [
+                (egui::Key::A, 0), (egui::Key::S, 2), (egui::Key::D, 4), (egui::Key::F, 5), (egui::Key::G, 7),
+                (egui::Key::H, 9), (egui::Key::J, 11), (egui::Key::K, 12), (egui::Key::L, 14),
+            ];
+            const SCHWARZ: [(egui::Key, u8); 6] =
+                [(egui::Key::W, 1), (egui::Key::E, 3), (egui::Key::T, 6), (egui::Key::Z, 8), (egui::Key::U, 10), (egui::Key::O, 13)];
+            ui.input(|i| {
+                if i.key_pressed(egui::Key::ArrowRight) && self.musik.klavier_oktave < 5 {
+                    self.musik.klavier_oktave += 1;
+                }
+                if i.key_pressed(egui::Key::ArrowLeft) && self.musik.klavier_oktave > 2 {
+                    self.musik.klavier_oktave -= 1;
+                }
+                for (k, n) in WEISS.iter().chain(SCHWARZ.iter()) {
+                    if i.key_down(*k) {
+                        gedrueckt = Some(basis + n);
+                    }
+                }
+            });
+            // Tasten zeichnen: zwei Oktaven (14 weiße), schwarze darüber
+            let breite = ui.available_width().min(700.0);
+            let (rect, antwort) = ui.allocate_exact_size(Vec2::new(breite, 120.0), Sense::click_and_drag());
+            let w = rect.width() / 14.0;
+            let maus = if antwort.is_pointer_button_down_on() { ui.input(|i| i.pointer.interact_pos()) } else { None };
+            const WEISS_HALBTON: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
+            const SCHWARZ_NACH: [Option<u8>; 7] = [Some(1), Some(3), None, Some(6), Some(8), Some(10), None];
+            let mut schwarze = Vec::new();
+            for i in 0..14 {
+                let n = basis + (i / 7) as u8 * 12 + WEISS_HALBTON[i % 7];
+                let r = egui::Rect::from_min_size(rect.min + Vec2::new(i as f32 * w, 0.0), Vec2::new(w - 2.0, rect.height()));
+                if let Some(h) = SCHWARZ_NACH[i % 7] {
+                    let n2 = basis + (i / 7) as u8 * 12 + h;
+                    let r2 = egui::Rect::from_min_size(rect.min + Vec2::new((i as f32 + 0.65) * w, 0.0), Vec2::new(w * 0.7, rect.height() * 0.6));
+                    schwarze.push((n2, r2));
+                }
+                if maus.is_some_and(|p| r.contains(p)) {
+                    gedrueckt = Some(n);
+                }
+                let zu_hoch = midi_hz(n) > 1000.0;
+                let an = self.musik.klavier_note == Some(n);
+                let fuell = if an { c.akzent } else if zu_hoch { c.linie } else { Color32::from_gray(235) };
+                ui.painter().rect_filled(r, CornerRadius::same(4), fuell);
+                if i % 7 == 0 {
+                    ui.painter().text(r.center_bottom() - Vec2::new(0.0, 12.0), egui::Align2::CENTER_CENTER, midi_name(n), egui::FontId::proportional(11.0), Color32::from_gray(90));
+                }
+            }
+            for (n, r) in &schwarze {
+                // schwarze Tasten liegen oben: sie gewinnen gegen die weiße darunter
+                if maus.is_some_and(|p| r.contains(p)) {
+                    gedrueckt = Some(*n);
+                }
+                let an = self.musik.klavier_note == Some(*n);
+                ui.painter().rect_filled(*r, CornerRadius::same(3), if an { c.akzent } else { Color32::from_gray(30) });
+            }
+        });
+        let gedrueckt = gedrueckt.filter(|&n| midi_hz(n) <= 1000.0 && midi_hz(n) >= 40.0);
+        self.klavier_senden(gedrueckt, ui.ctx());
+    }
+
+    /// Note an/aus und Erneuerung an die Firmware; Aufnahme mitschreiben
+    fn klavier_senden(&mut self, note: Option<u8>, ctx: &egui::Context) {
+        let jetzt = Instant::now();
+        let alt = self.musik.klavier_note;
+        if note != alt {
+            if let Some((_, ereignisse)) = self.musik.aufnahme.as_mut() {
+                ereignisse.push((note, jetzt));
+            }
+        }
+        match note {
+            Some(n) => {
+                let faellig = note != alt || self.musik.klavier_gesendet.is_none_or(|t| t.elapsed() >= Duration::from_millis(100));
+                if faellig {
+                    let _ = self.tx.send(Auftrag::Schicken(format!("chitu live {} {} 250", midi_hz(n).round() as u32, self.musik.pegel)));
+                    self.musik.klavier_gesendet = Some(jetzt);
+                }
+                ctx.request_repaint_after(Duration::from_millis(30));
+            }
+            None if alt.is_some() => {
+                let _ = self.tx.send(Auftrag::Schicken("chitu live aus".into()));
+                self.musik.klavier_gesendet = None;
+            }
+            None => {}
+        }
+        self.musik.klavier_note = note;
+    }
+
+    fn aufnahme_speichern(&mut self, start: Instant, ereignisse: &[(Option<u8>, Instant)]) {
+        if ereignisse.is_empty() {
+            return self.melden("Aufnahme leer, nichts gespeichert.", false);
+        }
+        let Some(ordner) = self.musik.ordner.clone() else {
+            return self.melden("Erst einen Ordner für die Stücke wählen.", true);
+        };
+        // Stille vor dem ersten Ton nicht mit aufnehmen
+        let erster = ereignisse[0].1;
+        let text = aufnahme_text(erster.max(start), ereignisse, Instant::now());
+        let datei = ordner.join(format!("aufnahme-{}.txt", jetzt_text()));
+        match std::fs::write(&datei, text) {
+            Ok(()) => {
+                self.melden(tr("Aufnahme gespeichert: {}", &[&datei.display()]), false);
+                self.musik.geladen = false;
+            }
+            Err(e) => self.melden(tr("Aufnahme nicht gespeichert: {}", &[&e]), true),
+        }
+    }
+
     fn musik_seite(&mut self, ui: &mut egui::Ui) {
         self.kopf(ui, "Musik", "Melodien über die HD-Rumble-Motoren des Chitu 2 HD. Am lautesten um 250 Hz, Controller auf dem Tisch klingt kräftiger.");
+        hinweis(ui, "Lange oder laute Töne belasten Motoren und Akku. Die Firmware begrenzt Pegel und Dauer, Schäden sind trotzdem möglich – auf eigene Gefahr.");
+        ui.add_space(8.0);
         if !self.ist_chitu() {
             hinweis(ui, "Nur am Chitu 2 HD: dieser Controller meldet sich nicht als Chitu.");
             return;
@@ -1670,6 +1869,8 @@ impl App {
             });
             hinweis(ui, "Abstand: kurze Lücke nach jedem Ton, damit gleiche Töne hintereinander getrennt klingen. Die Firmware erlaubt höchstens 50 % und schweigt nach 30 s Ton am Stück, bis die Hälfte davon als Pause nachgeholt ist.");
         });
+        ui.add_space(10.0);
+        self.klavier(ui);
         ui.add_space(10.0);
         karte(ui, |ui| {
             ui.horizontal(|ui| {

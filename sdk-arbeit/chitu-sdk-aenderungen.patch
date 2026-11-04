@@ -85,7 +85,7 @@ index 7bd1c91..0f78078 100644
  #ifndef CONFIG_DEBUG_LITE_ENABLE
  void log_putbyte(char c)
 diff --git a/apps/common/device/usb/device/cdc.c b/apps/common/device/usb/device/cdc.c
-index f61c39c..3e09bc7 100644
+index f61c39c..aff1030 100644
 --- a/apps/common/device/usb/device/cdc.c
 +++ b/apps/common/device/usb/device/cdc.c
 @@ -172,7 +172,22 @@ static u32 cdc_setup(struct usb_device_t *usb_device, struct usb_ctrlrequest *ct
@@ -125,6 +125,23 @@ index f61c39c..3e09bc7 100644
              break;
          default:
              log_error("unsupported class req");
+@@ -377,6 +398,16 @@ u32 cdc_write_data(const usb_dev usb_id, u8 *buf, u32 len)
+     while (offset < len) {
+         txlen = len - offset > MAXP_SIZE_CDC_BULKIN ?
+                 MAXP_SIZE_CDC_BULKIN : len - offset;
++#ifdef CONFIG_BOARD_C2LITE
++        /* Liegt das vorige Stück noch im Endpunkt, weil der PC nicht abholt (Port offen, aber niemand liest)? Dann
++         * nicht senden: usb_g_bulk_write wartet sonst aktiv, und bei vollem Puffer am PC startete der Watchdog neu
++         * (Chitu 4.11.: Spur app=0x42 = in cdc_write_data, Interrupts standen). Gleiche Prüfung wie hid.c (13b);
++         * der Rest bleibt im Protokoll-Ring und geht beim nächsten Senden raus. */
++        extern int c2_ep_tx_belegt(u32 ep);
++        if (c2_ep_tx_belegt(CDC_DATA_EP_IN)) {
++            break;
++        }
++#endif
+         txlen = usb_g_bulk_write(usb_id, CDC_DATA_EP_IN, buf + offset, txlen);
+         if (txlen == 0) {
+             break;
 diff --git a/apps/common/device/usb/device/custom_hid.c b/apps/common/device/usb/device/custom_hid.c
 index 5cf3471..730ea99 100644
 --- a/apps/common/device/usb/device/custom_hid.c
@@ -1366,7 +1383,7 @@ index 0000000..e6d9632
 +#endif
 diff --git a/apps/hid/board/br23/board_c2lite_cfg.h b/apps/hid/board/br23/board_c2lite_cfg.h
 new file mode 100644
-index 0000000..3a632c1
+index 0000000..353d034
 --- /dev/null
 +++ b/apps/hid/board/br23/board_c2lite_cfg.h
 @@ -0,0 +1,611 @@
@@ -1378,7 +1395,7 @@ index 0000000..3a632c1
 +#ifdef CONFIG_BOARD_C2LITE
 +/* Chitu 2 HD (komplett/chitu2hd): eigene SDK-Kopie, Stufe C1 = Pin-Monitor mit Sicherheitsnetzen (chitu.c) */
 +#define C2_CHITU 1
-+#define C2_STAND "chitu-CRd"
++#define C2_STAND "chitu-CRf"
 +/* Mobapad C2 Lite (Jieli AC695x). Abgeleitet von board_ac635n_demo_cfg.h; alles, was ohne Pin-Karte
 + * unbekannte Pins treiben würde, ist aus. */
 +
@@ -10297,10 +10314,10 @@ index 0000000..89390c6
 +#endif
 diff --git a/apps/hid/modules/c2lite/chitu.c b/apps/hid/modules/c2lite/chitu.c
 new file mode 100644
-index 0000000..9c61523
+index 0000000..1c88496
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/chitu.c
-@@ -0,0 +1,825 @@
+@@ -0,0 +1,830 @@
 +/* Chitu 2 HD, Stufe C1: Sicherheitsnetze N3/N4 und Pin-Monitor (nur lesen und melden).
 + *
 + * Quellen (eigene Analyse der Werks-Firmware 0.20, Notizen nicht im Repo): Werks-FW 0.20 hat dieselbe Tastenmatrix wie der C2 Lite (Pin-Tabellen
@@ -10937,6 +10954,11 @@ index 0000000..9c61523
 +/* Befehle „chitu …“ (c2_log.c) */
 +void chitu_befehl(const char *a)
 +{
++    if (!strncmp(a, "live ", 5)) {
++        extern void chitu_live_befehl(const char *a);
++        chitu_live_befehl(a + 5);
++        return;
++    }
 +    if (!strcmp(a, "ton") || !strncmp(a, "ton ", 4)) {
 +        extern void chitu_ton_befehl(const char *a);
 +        chitu_ton_befehl(a + 3);
@@ -10971,7 +10993,7 @@ index 0000000..9c61523
 +        return;
 +    }
 +#endif
-+    c2_log("fehler: chitu ton <hz> <ms> <pegel%%> [l|r|lr] | ton stop | takt <n> | roh | sticks an\r\n");
++    c2_log("fehler: chitu ton <hz> <ms> <pegel%%> [l|r|lr] | ton stop | live <hz> <pegel%%> [ms] | live aus | takt <n> | roh | sticks an\r\n");
 +}
 +
 +/* Statt c2_eingaben_init (C2_CHITU) */
@@ -11128,10 +11150,10 @@ index 0000000..9c61523
 +#endif
 diff --git a/apps/hid/modules/c2lite/chitu_dac.c b/apps/hid/modules/c2lite/chitu_dac.c
 new file mode 100644
-index 0000000..6e75323
+index 0000000..0c2bb12
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/chitu_dac.c
-@@ -0,0 +1,568 @@
+@@ -0,0 +1,671 @@
 +/* Chitu 2 HD, Stufe C-R: Linearmotoren (HD-Rumble) über den Audio-DAC – Töne und Melodien.
 + *
 + * Quellen (eigene Analyse der Werks-Firmware 0.20, Notizen nicht im Repo):
@@ -11310,14 +11332,62 @@ index 0000000..6e75323
 +    return (s16)(((w / teiler) * (32767 * PEGEL_DECKEL / 100)) >> 15);
 +}
 +
++/* ---------- Live-Ton (Klavier im Werkzeug, Stufe CRe) ----------
++ * Ein gehaltener Ton, solange das Werkzeug ihn erneuert (wie Rumble): Frequenz frei 40..1000 Hz, Pegel ≤ PEGEL_DECKEL,
++ * Pegel folgt dem Soll mit derselben 20-ms-Rampe, Phase läuft bei Frequenzwechsel durch (kein Knacken). Vorrang:
++ * Musik > Live-Ton > Rumble. */
++static volatile u8 live_soll;        /* 0..PEGEL_DECKEL % */
++static volatile u32 live_schritt;    /* Phasenschritt der Sollfrequenz */
++static volatile u32 live_rest;       /* Abtastwerte bis zum Ausklingen ohne Erneuerung */
++static u32 live_ist;                 /* aktueller Pegel in % × 256 */
++static u32 phase_live;
++
++static int live_aktiv(void)
++{
++    return live_rest || live_ist;
++}
++
++static s16 live_wert(void)
++{
++    u32 soll = 0;
++    if (live_rest) {
++        live_rest--;
++        soll = live_soll * 256;
++    }
++    if (live_ist < soll) {
++        live_ist = live_ist + RUMBLE_RAMPE < soll ? live_ist + RUMBLE_RAMPE : soll;
++    } else if (live_ist > soll) {
++        live_ist = live_ist > soll + RUMBLE_RAMPE ? live_ist - RUMBLE_RAMPE : soll;
++    }
++    s32 p = live_ist >> 8; /* 0..PEGEL_DECKEL */
++    if (!last_buchen(p != 0)) {
++        if (last_sperren) {
++            live_ist = 0;
++        }
++        return 0;
++    }
++    s32 w = SINUS[phase_live >> 24];
++    phase_live += live_schritt;
++    return (s16)((w * ((s32)32767 * p / 100)) >> 15);
++}
++
 +static s16 abtastwert(void)
 +{
 +    if (!akt_laeuft || !akt_rest) {
 +        ton_laden();
 +    }
 +    if (!akt_laeuft) {
++        if (live_aktiv()) { /* Live-Ton vor Rumble; Rumble läuft derweil ab */
++            if (rumble_rest) {
++                rumble_rest--;
++            }
++            rumble_ist[0] = rumble_ist[1] = 0;
++            return live_wert();
++        }
 +        return rumble_wert(); /* keine Musik: Rumble (oder Stille) */
 +    }
++    live_rest = 0; /* Musik hat Vorrang: Live-Ton endet */
++    live_ist = 0;
 +    if (rumble_rest) { /* Musik hat Vorrang, Rumble läuft derweil ab */
 +        rumble_rest--;
 +    }
@@ -11495,6 +11565,8 @@ index 0000000..6e75323
 +    akt_laeuft = 0;
 +    rumble_rest = 0;
 +    rumble_ist[0] = rumble_ist[1] = 0;
++    live_rest = 0;
++    live_ist = 0;
 +    ring_nullen(0, PUFFER_FRAMES, PUFFER_FRAMES);
 +    local_irq_enable();
 +    if (war_an) {
@@ -11687,6 +11759,59 @@ index 0000000..6e75323
 +    if (!dac_an) {
 +        chitu_dac_waechter_starten();
 +        dac_einschalten();
++    }
++}
++
++/* „chitu live <hz> <pegel%> [ms]“ bzw. „chitu live aus“ (Klavier im Werkzeug). Bei Erfolg KEINE Antwort (Prüfung CRe
++ * S1: 10 Erneuerungen/s würden sonst den 2-KB-Nachlass in ~15 s überschreiben); Fehler mit Präfix „live:“. */
++void chitu_live_befehl(const char *a)
++{
++    chitu_dac_waechter_starten();
++    while (*a == ' ') {
++        a++;
++    }
++    if (!strncmp(a, "aus", 3) && (a[3] == 0 || a[3] == ' ')) {
++        live_rest = 0; /* klingt in ~20 ms aus */
++        return;
++    }
++    if (pausiert || dac_fehler) {
++        c2_log("live: fehler gesperrt\r\n");
++        return;
++    }
++    int ok = 1;
++    u32 hz = zahl(&a, &ok), pegel = zahl(&a, &ok);
++    while (*a == ' ') {
++        a++;
++    }
++    u32 ms = 250;
++    if (*a) {
++        ms = zahl(&a, &ok);
++        while (*a == ' ') {
++            a++;
++        }
++        if (*a) { /* Prüfung CRe M5: kein Resttext */
++            ok = 0;
++        }
++    }
++    if (!ok || hz < HZ_MIN || hz > HZ_MAX || pegel > PEGEL_DECKEL || ms < 1 || ms > 1000) {
++        c2_log("live: fehler chitu live <%d..%d hz> <0..%d %%> [1..1000 ms] | aus\r\n", HZ_MIN, HZ_MAX, PEGEL_DECKEL);
++        return;
++    }
++    u32 schritt = (u32)(((u64)hz << 32) / RATE);
++    u32 rest = ms * (RATE / 1000);
++    local_irq_disable(); /* live_rest zählt der Füll-Interrupt herunter */
++    live_schritt = schritt;
++    live_soll = pegel;
++    live_rest = rest;
++    local_irq_enable();
++    stille_ms = 0;
++    if (!dac_an && dac_einschalten()) { /* Prüfung CRe S2: Fehlschlag melden */
++        live_rest = 0;
++        c2_log("live: fehler DAC startet nicht\r\n");
++        return;
++    }
++    if (akt_laeuft || ws_lies != ws_schreib) {
++        c2_log("live: fehler Musik läuft\r\n");
 +    }
 +}
 +

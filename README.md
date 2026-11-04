@@ -78,12 +78,13 @@ Läuft (an einem Gerät getestet):
 - PC: Xbox-Controller per USB (Linux ohne Kernel-Parameter) und per Bluetooth LE, alle Tasten, beide Sticks,
   L2/R2 digital (wie die Werks-Firmware)
 - Vibration aus Spielen auf beide Linearmotoren (linker Motor 160 Hz, rechter 320 Hz, wie die Werks-Firmware)
-- Melodien über die Motoren: `c2lite-custom musik <datei>` oder Seite „Musik“ im Programm (Notenformat unten)
+- Melodien über die Motoren: `c2lite-custom musik <datei>` oder Seite „Musik“ im Programm (Notenformat unten),
+  dort auch ein Klavier (Maus oder Tastatur, mit Aufnahme als Notendatei)
 - Updates per USB-Kabel, Rückweg zur Werks-Firmware
 
-Fehlt noch: Switch / Switch 2, Licht (Logo, Spieler-LEDs), Bewegungssensor, NFC. Bekannt: selten ein Neustart durch den
-Watchdog (der Controller ist nach ~4 s wieder da); die Ursache wird gesucht, das Programm sichert dabei das Protokoll
-nach `~/.cache/c2lite-custom/`.
+Fehlt noch: Switch / Switch 2, Licht (Logo, Spieler-LEDs), Bewegungssensor, NFC. Behoben (Stand chitu-CRf): Neustarts
+durch den Watchdog, wenn das Programm Befehle schickte, aber die Ausgabe des Controllers nicht abholte. Startet der
+Controller doch einmal neu, sichert das Programm das Protokoll nach `~/.cache/c2lite-custom/`.
 
 Installieren (nur Linux, nur über das USB-Kabel):
 
@@ -102,6 +103,12 @@ Wenn es im Takt brummt, Home + Y + X halten, bis das Brummen aufhört. Das Progr
   (diese Bremse ist bisher nur am C2 Lite mit derselben Firmware ausgelöst worden).
 - Stecken C2 Lite und Chitu gleichzeitig, fragt das Programm auf der Kommandozeile nach `--port`; in der Oberfläche
   gibt es unten links eine Auswahl.
+
+![Seite „Musik“ mit Klavier und Stückliste (Chitu 2 HD)](docs/bilder/musik.png)
+
+**Hinweis zu Musik und Vibration:** Lange oder laute Töne belasten die Motoren, die Mechanik und den Akku stärker als
+normales Rumble. Die Firmware begrenzt den Pegel (50 %) und die Dauer (30 s am Stück), ob das für jedes Gerät reicht,
+ist nicht geprüft. Schäden an Motoren oder Controller sind möglich; Nutzung auf eigene Gefahr.
 
 Notenformat für `musik`: Name + Oktave (`A3`, `C#4`, `H3`) oder Frequenz in Hz, Dauer `:ms`, Pause `P`, Kommentar `#`,
 z. B. [`docs/beispiel-melodie.txt`](docs/beispiel-melodie.txt). Am deutlichsten klingt es zwischen etwa 250 und 700 Hz,

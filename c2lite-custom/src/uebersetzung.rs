@@ -682,4 +682,23 @@ pub const TEXTE: &[(&str, &str)] = &[
         "Die Firmware-Datei ist kein Abbild von C2 Lite Custom oder Chitu. Abgebrochen, nichts geschrieben.",
         "The firmware file is not an image of C2 Lite Custom or Chitu. Aborted, nothing written.",
     ),
+    (
+        "Lange oder laute Töne belasten Motoren und Akku. Die Firmware begrenzt Pegel und Dauer, Schäden sind trotzdem möglich – auf eigene Gefahr.",
+        "Long or loud tones stress the motors and battery. The firmware limits level and duration, damage is still possible – use at your own risk.",
+    ),
+    // ---------- Klavier ----------
+    ("Klavier", "Piano"),
+    ("Aufnehmen", "Record"),
+    ("Aufnahme beenden", "Stop recording"),
+    ("Oktave höher", "Octave up"),
+    ("Oktave tiefer", "Octave down"),
+    ("Oktave {}", "Octave {}"),
+    (
+        "Maus oder Tastatur: weiße Tasten A S D F G H J K L, schwarze W E T Z U O, Pfeile ← → wechseln die Oktave. Braucht Firmware ab chitu-CRe.",
+        "Mouse or keyboard: white keys A S D F G H J K L, black W E T Z U O (German layout: Z next to T), arrows ← → change the octave. Needs firmware chitu-CRe or newer.",
+    ),
+    ("Aufnahme leer, nichts gespeichert.", "Recording empty, nothing saved."),
+    ("Erst einen Ordner für die Stücke wählen.", "Choose a folder for the pieces first."),
+    ("Aufnahme gespeichert: {}", "Recording saved: {}"),
+    ("Aufnahme nicht gespeichert: {}", "Recording not saved: {}"),
 ];
