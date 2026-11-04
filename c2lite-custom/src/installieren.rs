@@ -541,6 +541,7 @@ fn kern_ausfuehren(
     };
     let mut kind = Command::new("pkexec").arg(exe).args(args).stdout(Stdio::piped()).stderr(Stdio::from(protokoll)).spawn()?;
     let mut ergebnis: Option<std::result::Result<String, String>> = None;
+    let mut chitu_installiert = false;
     for z in BufReader::new(kind.stdout.take().unwrap()).lines() {
         let z = z?;
         let (art, rest) = z.split_once(' ').unwrap_or((z.as_str(), ""));
@@ -548,7 +549,10 @@ fn kern_ausfuehren(
             "SCHRITT" => melden(Meldung::Schritt(t_meldung(rest))),
             "HINWEIS" => melden(Meldung::Hinweis(t_meldung(rest))),
             "FORTSCHRITT" => melden(Meldung::Fortschritt(rest.parse().unwrap_or(0.0))),
-            "FERTIG" => ergebnis = Some(Ok(t_meldung(rest))),
+            "FERTIG" => {
+                chitu_installiert = rest.contains("Chitu");
+                ergebnis = Some(Ok(t_meldung(rest)));
+            }
             "FEHLER" => ergebnis = Some(Err(t_meldung(rest))),
             _ => {}
         }
@@ -557,7 +561,7 @@ fn kern_ausfuehren(
     match ergebnis {
         Some(Ok(mut t)) => {
             if kopplung_entfernen {
-                let entfernt = crate::bt_pc::alte_kopplungen_entfernen();
+                let entfernt = crate::bt_pc::alte_kopplungen_entfernen(if chitu_installiert { "Chitu dazi" } else { "C2 Lite dazi" });
                 if !entfernt.is_empty() {
                     t.push(' ');
                     t.push_str(crate::sprache::t(

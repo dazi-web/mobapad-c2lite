@@ -62,10 +62,11 @@ pub fn vibration_testen(g: &BtGamepad) -> Result<(), String> {
 /// Kopplungen des Rechners (BlueZ) mit C2 Lite Custom entfernen; liefert die entfernten Adressen. Nach einer Installation
 /// ist der Einstellungsspeicher des Controllers frisch: Nur der Rechner kennt noch den alten Schlüssel, BlueZ verbindet
 /// dann etwa einmal pro Sekunde, jedes Lesen scheitert, und der Controller „sucht“ ohne Ende (am Gerät 2.11.).
-/// Erkannt am Namen, den die Firmware wirbt („C2 Lite dazi“, BlueZ hängt „(BLE)“ an). Ohne bluetoothctl: nichts.
-pub fn alte_kopplungen_entfernen() -> Vec<String> {
+/// Erkannt am Namen, den die Firmware wirbt („C2 Lite dazi“ bzw. „Chitu dazi“, BlueZ hängt „(BLE)“ an); nur die der
+/// gerade installierten Platine, damit die Kopplung eines zweiten Controllers bleibt. Ohne bluetoothctl: nichts.
+pub fn alte_kopplungen_entfernen(name: &str) -> Vec<String> {
     let Ok(aus) = std::process::Command::new("bluetoothctl").arg("devices").output() else { return Vec::new() };
-    c2_adressen(&String::from_utf8_lossy(&aus.stdout))
+    adressen(&String::from_utf8_lossy(&aus.stdout), name)
         .into_iter()
         .filter(|adr| {
             let r = std::process::Command::new("bluetoothctl").args(["remove", adr]).output();
@@ -74,14 +75,14 @@ pub fn alte_kopplungen_entfernen() -> Vec<String> {
         .collect()
 }
 
-/// Adressen aus „bluetoothctl devices“, deren Name mit „C2 Lite dazi“ beginnt
-fn c2_adressen(liste: &str) -> Vec<String> {
+/// Adressen aus „bluetoothctl devices“, deren Name mit `name` beginnt
+fn adressen(liste: &str, name_anfang: &str) -> Vec<String> {
     liste
         .lines()
         .filter_map(|z| {
             // „Device XX:XX:XX:XX:XX:XX C2 Lite dazi(BLE)“
             let (adr, name) = z.strip_prefix("Device ")?.split_once(' ')?;
-            name.starts_with("C2 Lite dazi").then(|| adr.to_string())
+            name.starts_with(name_anfang).then(|| adr.to_string())
         })
         .collect()
 }
@@ -93,7 +94,10 @@ mod tests {
         let liste = "Device 11:22:33:44:55:66 Lautsprecher\n\
                      Device 11:22:33:44:55:77 C2 Lite dazi(BLE)\n\
                      Device 11:22:33:44:55:88 Mobapad C2-lite\n\
-                     Device 11:22:33:44:55:99 Xbox Wireless Controller\n";
-        assert_eq!(super::c2_adressen(liste), ["11:22:33:44:55:77"]);
+                     Device 11:22:33:44:55:99 Xbox Wireless Controller\n\
+                     Device 11:22:33:44:55:AA Chitu dazi(BLE)\n\
+                     Device 11:22:33:44:55:BB Mobapad-Pro2-HD\n";
+        assert_eq!(super::adressen(liste, "C2 Lite dazi"), ["11:22:33:44:55:77"]);
+        assert_eq!(super::adressen(liste, "Chitu dazi"), ["11:22:33:44:55:AA"]);
     }
 }
