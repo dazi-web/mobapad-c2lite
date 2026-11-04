@@ -48,6 +48,8 @@ enum Seite {
     Diagnose,
     Backup,
     Installieren,
+    /// nur am Chitu 2 HD (HD-Rumble-Motoren)
+    Musik,
 }
 
 const SEITEN: &[(Seite, &str, &str)] = &[
@@ -58,6 +60,7 @@ const SEITEN: &[(Seite, &str, &str)] = &[
     (Seite::Firmware, icon::CPU, "Firmware"),
     (Seite::Diagnose, icon::TERMINAL, "Diagnose"),
     (Seite::Backup, icon::ARCHIVE, "Backup"),
+    (Seite::Musik, icon::MUSIC_NOTES, "Musik"),
     (Seite::Installieren, icon::DOWNLOAD_SIMPLE, "Installieren"),
 ];
 
@@ -116,6 +119,81 @@ struct App {
     weck: Option<Option<Kennung>>,
     /// läuft „Wecken einrichten“: Abbruch-Flag und Start
     weck_lauscht: Option<(Arc<AtomicBool>, Instant)>,
+    musik: Musik,
+    /// Controller am USB (Port, Anzeige), höchstens einmal je Sekunde neu gelesen
+    usb_liste: (Option<Instant>, Vec<(String, String)>),
+}
+
+/// Seite „Musik“ (Chitu 2 HD): Stücke aus einem Ordner mit Notendateien (*.txt, Format wie „c2lite-custom musik“)
+struct Musik {
+    ordner: Option<PathBuf>,
+    /// (Datei, Titel, Text)
+    liste: Vec<(PathBuf, String, String)>,
+    geladen: bool,
+    pegel: u32,
+    auto: bool,
+    halbtoene: i32,
+    kanal: &'static str,
+    abstand: u32,
+    /// läuft: Titel, Start, Dauer in s, Abbruch-Flag
+    laeuft: Option<(String, Instant, f64, Arc<AtomicBool>)>,
+}
+
+impl Default for Musik {
+    fn default() -> Musik {
+        Musik {
+            ordner: musik_ordner_lesen(),
+            liste: Vec::new(),
+            geladen: false,
+            // Hörtest am Chitu 3.11.: 40 %, wie notiert (auto um 250 Hz klang dumpfer), 30 ms Abstand am besten
+            pegel: 40,
+            auto: false,
+            halbtoene: 0,
+            kanal: "lr",
+            abstand: 30,
+            laeuft: None,
+        }
+    }
+}
+
+/// Gemerkter Ordner: ~/.config/c2lite-custom/musik-ordner (eine Zeile mit dem Pfad)
+fn musik_ordner_datei() -> Option<PathBuf> {
+    let basis = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(basis.join("c2lite-custom").join("musik-ordner"))
+}
+
+fn musik_ordner_lesen() -> Option<PathBuf> {
+    let p = PathBuf::from(std::fs::read_to_string(musik_ordner_datei()?).ok()?.trim());
+    p.is_dir().then_some(p)
+}
+
+fn musik_ordner_merken(p: &std::path::Path) {
+    if let Some(d) = musik_ordner_datei() {
+        if let Some(eltern) = d.parent() {
+            let _ = std::fs::create_dir_all(eltern);
+        }
+        let _ = std::fs::write(d, p.to_string_lossy().as_bytes());
+    }
+}
+
+/// Alle *.txt im Ordner, nach Titel sortiert
+fn musik_liste(ordner: &std::path::Path) -> Vec<(PathBuf, String, String)> {
+    let mut v: Vec<_> = std::fs::read_dir(ordner)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "txt"))
+        .filter_map(|p| {
+            let text = std::fs::read_to_string(&p).ok()?;
+            let name = p.file_stem()?.to_string_lossy().into_owned();
+            Some((p, crate::musik::titel(&text, &name), text))
+        })
+        .collect();
+    v.sort_by_key(|(_, t, _)| t.to_lowercase());
+    v
 }
 
 impl App {
@@ -148,6 +226,7 @@ impl App {
                 Ok("diagnose") => Seite::Diagnose,
                 Ok("backup") => Seite::Backup,
                 Ok("installieren") => Seite::Installieren,
+                Ok("musik") => Seite::Musik,
                 _ => Seite::Uebersicht,
             },
             verbindung: Verbindung::Sucht(Weg::Usb),
@@ -183,6 +262,8 @@ impl App {
             pro2: None,
             weck: None,
             weck_lauscht: None,
+            musik: Default::default(),
+            usb_liste: (None, Vec::new()),
         };
         // C2LITE_DEMO=tasten|uebertragung|fertig: Ablauf-Anzeige der Installation für Screenshots, ohne Gerät
         #[cfg(target_os = "linux")]
@@ -194,6 +275,11 @@ impl App {
             app.verbindung = Verbindung::Getrennt;
         }
         app
+    }
+
+    /// Verbunden und die Firmware meldet ein Chitu 2 HD (nur dort gibt es Musik)
+    fn ist_chitu(&self) -> bool {
+        self.verbunden() && self.info.as_ref().is_some_and(|i| i.geraet == "chitu")
     }
 
     fn verbunden(&self) -> bool {
@@ -255,6 +341,7 @@ impl App {
                     self.fehler = None;
                     self.neu_verbinden_versuche = 0;
                     self.live = false;
+                    self.info = None; // Gerätetyp neu lesen (C2 Lite oder Chitu)
                     self.alles_laden();
                 }
                 Meldung::Getrennt(grund) => {
@@ -288,6 +375,13 @@ impl App {
                             self.spaeter_verbinden(7);
                         }
                         Err(e) => self.melden(tr("Update abgebrochen: {}. Die bisherige Firmware läuft weiter.", &[&crate::sprache::t_meldung(&e)]), true),
+                    }
+                }
+                Meldung::Hinweis(text, fehler) => self.melden(crate::sprache::t_meldung(&text), fehler),
+                Meldung::MusikGesendet(r) => {
+                    if let Err(e) = r {
+                        self.musik.laeuft = None;
+                        self.melden(tr("Musik: {}", &[&crate::sprache::t_meldung(&e)]), true);
                     }
                 }
                 Meldung::WeckenFertig(r) => {
@@ -542,6 +636,7 @@ impl eframe::App for App {
                                 Seite::Firmware => self.firmware_seite(ui),
                                 Seite::Diagnose => self.diagnose_seite(ui),
                                 Seite::Backup => self.backup_seite(ui),
+                                Seite::Musik => self.musik_seite(ui),
                                 #[cfg(target_os = "linux")]
                                 Seite::Installieren => self.installieren_seite(ui),
                                 #[cfg(not(target_os = "linux"))]
@@ -561,6 +656,34 @@ impl eframe::App for App {
 // ---------- Seitenleiste und Rahmen ----------
 
 impl App {
+    /// Mehrere Controller am USB: Auswahl (über die Seriennummer, der Name kann sich mit der Firmware ändern)
+    fn controller_wahl(&mut self, ui: &mut egui::Ui) {
+        if self.usb_liste.0.is_none_or(|t| t.elapsed() > Duration::from_secs(1)) {
+            self.usb_liste = (Some(Instant::now()), crate::geraet::alle());
+            ui.ctx().request_repaint_after(Duration::from_secs(1));
+        }
+        if self.usb_liste.1.len() < 2 {
+            return;
+        }
+        let aktuell = crate::geraet::finden().unwrap_or_default();
+        let anzeige = self.usb_liste.1.iter().find(|(p, _)| *p == aktuell).map(|(_, a)| a.clone()).unwrap_or_default();
+        let mut neu: Option<String> = None;
+        egui::ComboBox::from_id_salt("controller_wahl")
+            .width(ui.available_width())
+            .selected_text(format!("{}  {}", icon::GAME_CONTROLLER, anzeige))
+            .show_ui(ui, |ui| {
+                for (p, a) in &self.usb_liste.1 {
+                    if ui.selectable_label(*p == aktuell, a.as_str()).clicked() && *p != aktuell {
+                        neu = Some(p.clone());
+                    }
+                }
+            });
+        if let Some(p) = neu {
+            crate::geraet::waehlen(Some(crate::geraet::serie(&p)));
+            self.verbinden(Weg::Usb);
+        }
+    }
+
     fn seitenleiste(&mut self, ui: &mut egui::Ui) {
         let c = farben(ui.ctx());
         ui.horizontal(|ui| {
@@ -572,7 +695,14 @@ impl App {
             });
         });
         ui.add_space(22.0);
+        let chitu = self.ist_chitu();
+        if self.seite == Seite::Musik && !chitu && self.info.is_some() {
+            self.seite = Seite::Uebersicht;
+        }
         for (seite, ic, name) in SEITEN {
+            if *seite == Seite::Musik && !chitu {
+                continue;
+            }
             let gewaehlt = self.seite == *seite;
             let (rect, antwort) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::click());
             let fill = if gewaehlt {
@@ -609,6 +739,7 @@ impl App {
                 }
             });
             ui.add_space(4.0);
+            self.controller_wahl(ui);
             match &self.verbindung {
                 Verbindung::Verbunden(weg, name) => {
                     let weg = *weg;
@@ -1459,6 +1590,140 @@ impl App {
                     self.backup_laden();
                 }
             });
+        });
+    }
+
+    fn musik_seite(&mut self, ui: &mut egui::Ui) {
+        self.kopf(ui, "Musik", "Melodien über die HD-Rumble-Motoren des Chitu 2 HD. Am lautesten um 250 Hz, Controller auf dem Tisch klingt kräftiger.");
+        if !self.ist_chitu() {
+            hinweis(ui, "Nur am Chitu 2 HD: dieser Controller meldet sich nicht als Chitu.");
+            return;
+        }
+        let c = farben(ui.ctx());
+        if !self.musik.geladen {
+            self.musik.geladen = true;
+            self.musik.liste = self.musik.ordner.as_deref().map(musik_liste).unwrap_or_default();
+        }
+        // läuft gerade etwas?
+        let mut stoppen = false;
+        if let Some((name, start, dauer, _)) = &self.musik.laeuft {
+            let anteil = (start.elapsed().as_secs_f64() / dauer.max(0.1)).min(1.0);
+            if anteil >= 1.0 {
+                self.musik.laeuft = None;
+            } else {
+                karte(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(icon::SPEAKER_HIGH).size(22.0).color(c.akzent));
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(name.as_str()).strong());
+                            let text = format!("{:.1} / {:.1} s", start.elapsed().as_secs_f64().min(*dauer), dauer);
+                            ui.add(egui::ProgressBar::new(anteil as f32).desired_width(420.0).text(text));
+                        });
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.button(format!("{}  {}", icon::STOP, t("Stopp"))).clicked() {
+                                stoppen = true;
+                            }
+                        });
+                    });
+                });
+                ui.add_space(10.0);
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+            }
+        }
+        if stoppen {
+            if let Some((_, _, _, abbruch)) = self.musik.laeuft.take() {
+                abbruch.store(true, Ordering::Relaxed);
+            }
+            self.senden(Zweck::Still, vec!["chitu ton stop".into()]);
+        }
+        karte(ui, |ui| {
+            titel(ui, "Einstellungen");
+            egui::Grid::new("musik_einst").num_columns(2).spacing([18.0, 10.0]).show(ui, |ui| {
+                ui.label(t("Pegel"));
+                stil::regler(ui, &mut self.musik.pegel, 1..=50, " %");
+                ui.end_row();
+                ui.label(t("Lage"));
+                ui.horizontal(|ui| {
+                    if ui.add(stil::wahl(!self.musik.auto, "wie notiert")).clicked() {
+                        self.musik.auto = false;
+                    }
+                    if ui.add(stil::wahl(self.musik.auto, "um die Resonanz (auto)")).clicked() {
+                        self.musik.auto = true;
+                    }
+                });
+                ui.end_row();
+                ui.label(t("Verschieben"));
+                stil::regler(ui, &mut self.musik.halbtoene, -12..=12, &format!(" {}", t("Halbtöne")));
+                ui.end_row();
+                ui.label(t("Abstand"));
+                stil::regler(ui, &mut self.musik.abstand, 0..=crate::musik::ABSTAND_MAX_MS, " ms");
+                ui.end_row();
+                ui.label(t("Motoren"));
+                ui.horizontal(|ui| {
+                    for (k, name) in [("lr", "beide"), ("l", "links"), ("r", "rechts")] {
+                        if ui.add(stil::wahl(self.musik.kanal == k, name)).clicked() {
+                            self.musik.kanal = k;
+                        }
+                    }
+                });
+                ui.end_row();
+            });
+            hinweis(ui, "Abstand: kurze Lücke nach jedem Ton, damit gleiche Töne hintereinander getrennt klingen. Die Firmware erlaubt höchstens 50 % und schweigt nach 30 s Ton am Stück, bis die Hälfte davon als Pause nachgeholt ist.");
+        });
+        ui.add_space(10.0);
+        karte(ui, |ui| {
+            ui.horizontal(|ui| {
+                titel(ui, "Stücke");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button(format!("{}  {}", icon::FOLDER_OPEN, t("Ordner wählen"))).clicked() {
+                        if let Some(p) = rfd::FileDialog::new().set_title(t("Ordner mit Notendateien")).pick_folder() {
+                            musik_ordner_merken(&p);
+                            self.musik.ordner = Some(p);
+                            self.musik.geladen = false;
+                        }
+                    }
+                    if self.musik.ordner.is_some() && ui.button(t("Neu laden")).clicked() {
+                        self.musik.geladen = false;
+                    }
+                });
+            });
+            match &self.musik.ordner {
+                None => hinweis(ui, "Noch kein Ordner gewählt. Notendateien (*.txt) wie bei „c2lite-custom musik“, z. B. „A3:400 D3:800 P:200“."),
+                Some(o) => {
+                    ui.label(RichText::new(o.display().to_string()).small().color(c.schwach));
+                }
+            }
+            ui.add_space(6.0);
+            if self.musik.ordner.is_some() && self.musik.liste.is_empty() {
+                hinweis(ui, "Keine Notendateien (*.txt) in diesem Ordner.");
+            }
+            let mut starten: Option<usize> = None;
+            let besetzt = self.musik.laeuft.is_some();
+            for (i, (_, name, text)) in self.musik.liste.iter().enumerate() {
+                let vorschau = crate::musik::vorbereiten(text, self.musik.pegel, self.musik.halbtoene, self.musik.auto, self.musik.kanal, self.musik.abstand);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let knopf = ui.add_enabled(!besetzt && vorschau.is_ok(), egui::Button::new(RichText::new(icon::PLAY).size(18.0)).min_size(Vec2::new(40.0, 32.0)));
+                    if knopf.clicked() {
+                        starten = Some(i);
+                    }
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(name.as_str()).strong());
+                        match &vorschau {
+                            Ok(s) => ui.label(RichText::new(tr("{} s, {} Noten", &[&format!("{:.1}", s.gesamt_s), &s.noten])).small().color(c.schwach)),
+                            Err(e) => ui.label(RichText::new(crate::sprache::t_meldung(e)).small().color(c.fehler)),
+                        };
+                    });
+                });
+            }
+            if let Some(i) = starten {
+                let (_, name, text) = &self.musik.liste[i];
+                if let Ok(s) = crate::musik::vorbereiten(text, self.musik.pegel, self.musik.halbtoene, self.musik.auto, self.musik.kanal, self.musik.abstand) {
+                    let abbruch = Arc::new(AtomicBool::new(false));
+                    self.musik.laeuft = Some((name.clone(), Instant::now(), s.gesamt_s, abbruch.clone()));
+                    let _ = self.tx.send(Auftrag::Musik(s.befehle, abbruch));
+                }
+            }
         });
     }
 }

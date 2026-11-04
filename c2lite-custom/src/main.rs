@@ -17,6 +17,7 @@ mod ff;
 mod bt_pc;
 mod geraet;
 mod gui;
+mod musik;
 mod paket;
 mod sprache;
 mod test;
@@ -80,6 +81,11 @@ Befehle:
   update <db_update_data.bin>  Firmware-Update über USB in die freie Bank (Dual-Bank-Firmware)
   neustart                     Controller neu starten
   roh <befehl …>               Firmware-Befehl direkt senden (Fehlersuche, z. B. „roh akku diag“)
+  musik <datei|noten> [--pegel 1..50] [--transponieren <halbtöne>] [--lage auto] [--abstand 0..60] [--kanal l|r|lr]
+                               nur Chitu 2 HD: Melodie über die HD-Rumble-Motoren (Vorgabe Pegel 40 %, Abstand 30 ms).
+                               Noten: A3:400 C#4:200 250:300 P:100 (Name+Oktave oder Hz, :ms, P = Pause, # Kommentar).
+                               --lage auto legt die Melodie um die Motor-Resonanz (~250 Hz)
+  musik stop                   Musik sofort anhalten
   download-modus               in den ROM-Download-Modus springen (zum Flashen)
   download lesen <datei> [adresse] [länge]
                                im ROM-Download-Modus Flash lesen (Vorgabe: ganzer Flash, 1 MB); braucht root oder
@@ -149,6 +155,11 @@ Commands:
   update <db_update_data.bin>  firmware update over USB into the free bank (dual-bank firmware)
   neustart                     restart the controller
   roh <command …>              send a firmware command directly (debugging, e.g. „roh akku diag“)
+  musik <file|notes> [--pegel 1..50] [--transponieren <semitones>] [--lage auto] [--abstand 0..60] [--kanal l|r|lr]
+                               Chitu 2 HD only: play a melody on the HD rumble motors (default level 40 %, gap 30 ms).
+                               Notes: A3:400 C#4:200 250:300 P:100 (name+octave or Hz, :ms, P = rest, # comment).
+                               --lage auto moves the melody around the motor resonance (~250 Hz)
+  musik stop                   stop the music at once
   download-modus               jump into the ROM download mode (for flashing)
   download lesen <file> [address] [length]
                                read flash in ROM download mode (default: whole flash, 1 MB); needs root or
@@ -227,6 +238,15 @@ fn main() -> ExitCode {
             }
         }
     } else {
+        // Mehrere Controller am USB und kein --port: nicht raten (ein Update könnte das falsche Gerät treffen)
+        let alle = geraet::alle();
+        if port.is_none() && alle.len() > 1 {
+            eprintln!("{}", t("Mehrere Controller am USB. Bitte einen mit --port wählen:"));
+            for (p, a) in &alle {
+                eprintln!("  {a}:  --port {p}");
+            }
+            return ExitCode::FAILURE;
+        }
         let Some(pfad) = port.or_else(geraet::finden) else {
             eprintln!("{}", t("Kein Controller mit eigener Firmware gefunden (USB-Kabel gesteckt? Sonst --bluetooth)."));
             return ExitCode::FAILURE;
@@ -301,6 +321,7 @@ fn ausfuehren(g: &mut dyn Kanal, args: &[String]) -> Result<(), String> {
             Ok(())
         }
         "wecken" => wecken_befehl(g, rest(1)),
+        "musik" => musik::befehl(g, &args[1..]),
         "roh" => {
             let befehl = args[1..].join(" ");
             let alle = ["ok:", "fehler:", "info:", "status:", "einstellungen:", "akku:", "rgb:", "motor:", "switch:", "log:", "belegung:", "turbo:", "Befehle:"];
@@ -585,10 +606,54 @@ fn update(g: &mut dyn Kanal, datei: &str) -> Result<(), String> {
 }
 
 /// Überträgt ein Update (db_update_data.bin) und schaltet die Bank um; `fortschritt` bekommt 0.0..1.0
+/// Für welches Gerät ist ein Update-Abbild (db_update_data.bin) gebaut? Das Abbild ist mit Jieli-ENC verschlüsselt
+/// (32-Byte-Blöcke, Schlüssel 0xA80F ^ (Offset >> 2), wie abbild.rs); entschlüsselt steht darin die info-Zeile der
+/// Firmware mit „stand=…“ und beim Chitu „ geraet=chitu“. Ergebnis: (Stand, ist_chitu), None = kein eigenes Abbild.
+pub fn update_kennung(daten: &[u8]) -> Option<(String, bool)> {
+    let mut d = daten.to_vec();
+    for (i, blk) in d.chunks_mut(32).enumerate() {
+        let mut k = 0xA80Fu16 ^ (((i * 32) >> 2) as u16);
+        for b in blk {
+            *b ^= k as u8;
+            k = (k << 1) ^ if k & 0x8000 != 0 { 0x1021 } else { 0 };
+        }
+    }
+    let finden = |muster: &[u8]| d.windows(muster.len()).position(|w| w == muster);
+    let a = finden(b"firmware=c2lite-custom stand=")? + b"firmware=c2lite-custom stand=".len();
+    let ende = d[a..].iter().position(|&c| c == b' ' || c == 0).map_or(d.len(), |e| a + e);
+    let stand = String::from_utf8_lossy(&d[a..ende]).into_owned();
+    // „ geraet=chitu-probe“ (Generalprobe-Bau für den C2 Lite) zählt zur C2-Platine, nur „ geraet=chitu“ + Ende zum Chitu
+    let chitu = (0..d.len()).filter(|&i| d[i..].starts_with(b" geraet=chitu")).any(|i| {
+        let rest = &d[i + b" geraet=chitu".len()..];
+        !rest.starts_with(b"-probe")
+    });
+    Some((stand, chitu))
+}
+
+/// Passt das Abbild zum angeschlossenen Controller? Sonst Fehler, bevor irgendetwas geschrieben wird.
+fn update_passt(g: &mut dyn Kanal, daten: &[u8]) -> Result<(), String> {
+    let Some((stand, abbild_chitu)) = update_kennung(daten) else {
+        return Err(t("Das ist kein Update für C2 Lite Custom oder Chitu (keine Kennung im Abbild). Abgebrochen, nichts geschrieben.").into());
+    };
+    // bis 6 s: bei älteren Chitu-Ständen war die info-Zeile zu lang und endete erst mit der nächsten Protokollzeile
+    let info = g.befehl("info", &["info:"], Duration::from_secs(6))?;
+    let geraet_chitu = crate::musik::ist_chitu(&info);
+    let name = |chitu: bool| if chitu { "Chitu 2 HD" } else { "C2 Lite" };
+    if abbild_chitu != geraet_chitu {
+        return Err(tr(
+            "Diese Update-Datei ist für das {} (Stand {}), angeschlossen ist ein {}. Abgebrochen, nichts geschrieben.",
+            &[&name(abbild_chitu), &stand, &name(geraet_chitu)],
+        ));
+    }
+    Ok(())
+}
+
 pub fn update_daten(g: &mut dyn Kanal, daten: &[u8], fortschritt: &mut dyn FnMut(f32)) -> Result<(), String> {
     if daten.is_empty() {
         return Err(t("Die Update-Datei ist leer").into());
     }
+    // Gerätetyp-Prüfung (Chitu-Prüfung M-4): kein C2-Abbild aufs Chitu und umgekehrt (andere Platine, andere Pins)
+    update_passt(g, daten)?;
     let lang = Duration::from_secs(5);
     antwort_still(g.befehl(&format!("ota start {}", daten.len()), ANTWORT, lang)?)?;
     for (i, stueck) in daten.chunks(256).enumerate() {
@@ -609,5 +674,49 @@ fn antwort_still(zeile: String) -> Result<(), String> {
     match zeile.strip_prefix("fehler:") {
         Some(rest) => Err(rest.trim().to_string()),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests_update {
+    use super::update_kennung;
+
+    /// Jieli-ENC wie im Abbild (symmetrisch)
+    fn enc(d: &[u8]) -> Vec<u8> {
+        let mut d = d.to_vec();
+        for (i, blk) in d.chunks_mut(32).enumerate() {
+            let mut k = 0xA80Fu16 ^ (((i * 32) >> 2) as u16);
+            for b in blk {
+                *b ^= k as u8;
+                k = (k << 1) ^ if k & 0x8000 != 0 { 0x1021 } else { 0 };
+            }
+        }
+        d
+    }
+
+    #[test]
+    fn kennung_aus_abbild() {
+        let mut roh = vec![0u8; 100];
+        roh.extend_from_slice(b"info: firmware=c2lite-custom stand=chitu-CRc gebaut=%s ... geraet=chitu\r\n\0");
+        roh.extend(vec![7u8; 77]);
+        assert_eq!(update_kennung(&enc(&roh)), Some(("chitu-CRc".to_string(), true)));
+        let probe = b"xx firmware=c2lite-custom stand=chitu-X-probe gebaut=%s geraet=chitu-probe\r\n\0".to_vec();
+        assert_eq!(update_kennung(&enc(&probe)), Some(("chitu-X-probe".to_string(), false)));
+        let c2 = b"xx firmware=c2lite-custom stand=16o gebaut=%s akku=%u%%\r\n\0".to_vec();
+        assert_eq!(update_kennung(&enc(&c2)), Some(("16o".to_string(), false)));
+        assert_eq!(update_kennung(&enc(b"irgendwas anderes")), None);
+        assert_eq!(update_kennung(&[]), None);
+    }
+
+    /// Mit echten Update-Dateien aus $C2LITE_TESTDATEN (nicht im Repo; ohne die Variable übersprungen)
+    #[test]
+    fn echte_pakete() {
+        let Ok(t) = std::env::var("C2LITE_TESTDATEN") else { return };
+        if let Ok(d) = std::fs::read(format!("{t}/chitu-db_update_data.bin")) {
+            assert_eq!(update_kennung(&d).map(|k| k.1), Some(true));
+        }
+        if let Ok(d) = std::fs::read(format!("{t}/c2-db_update_data.bin")) {
+            assert_eq!(update_kennung(&d), Some(("16o".to_string(), false)));
+        }
     }
 }

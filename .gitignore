@@ -12,10 +12,17 @@
 !/release/db_update_data.bin
 !/release/SHA256SUMS
 !/release/LIESMICH.txt
+!/release/chitu/
+/release/chitu/*
+!/release/chitu/jl_isd.bin
+!/release/chitu/db_update_data.bin
+!/release/chitu/SHA256SUMS
+!/release/chitu/LIESMICH.txt
 
 !/docs/
 /docs/*
 !/docs/*.md
+!/docs/beispiel-melodie.txt
 /docs/SWITCH1-GRUNDGERUEST.md
 !/docs/bilder/
 /docs/bilder/*
@@ -33,6 +40,8 @@
 /sdk-arbeit/*
 !/sdk-arbeit/sdk-aenderungen.patch
 !/sdk-arbeit/sdk-aenderungen-dateien.txt
+!/sdk-arbeit/chitu-sdk-aenderungen.patch
+!/sdk-arbeit/chitu-sdk-aenderungen-dateien.txt
 
 !/werkzeuge/
 /werkzeuge/*

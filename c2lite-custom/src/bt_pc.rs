@@ -33,7 +33,7 @@ pub fn finden() -> Option<BtGamepad> {
         for input in inputs.flatten() {
             let p = input.path();
             let n = std::fs::read_to_string(p.join("name")).unwrap_or_default();
-            if !n.contains("C2 Lite") || n.contains("Consumer") {
+            if !(n.contains("C2 Lite") || n.contains("Chitu")) || n.contains("Consumer") {
                 continue;
             }
             let ff = std::fs::read_to_string(p.join("capabilities/ff")).unwrap_or_default();
@@ -57,4 +57,43 @@ pub fn vibration_testen(g: &BtGamepad) -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_millis(900));
     }
     Ok(())
+}
+
+/// Kopplungen des Rechners (BlueZ) mit C2 Lite Custom entfernen; liefert die entfernten Adressen. Nach einer Installation
+/// ist der Einstellungsspeicher des Controllers frisch: Nur der Rechner kennt noch den alten Schlüssel, BlueZ verbindet
+/// dann etwa einmal pro Sekunde, jedes Lesen scheitert, und der Controller „sucht“ ohne Ende (am Gerät 2.11.).
+/// Erkannt am Namen, den die Firmware wirbt („C2 Lite dazi“, BlueZ hängt „(BLE)“ an). Ohne bluetoothctl: nichts.
+pub fn alte_kopplungen_entfernen() -> Vec<String> {
+    let Ok(aus) = std::process::Command::new("bluetoothctl").arg("devices").output() else { return Vec::new() };
+    c2_adressen(&String::from_utf8_lossy(&aus.stdout))
+        .into_iter()
+        .filter(|adr| {
+            let r = std::process::Command::new("bluetoothctl").args(["remove", adr]).output();
+            matches!(r, Ok(r) if r.status.success())
+        })
+        .collect()
+}
+
+/// Adressen aus „bluetoothctl devices“, deren Name mit „C2 Lite dazi“ beginnt
+fn c2_adressen(liste: &str) -> Vec<String> {
+    liste
+        .lines()
+        .filter_map(|z| {
+            // „Device XX:XX:XX:XX:XX:XX C2 Lite dazi(BLE)“
+            let (adr, name) = z.strip_prefix("Device ")?.split_once(' ')?;
+            name.starts_with("C2 Lite dazi").then(|| adr.to_string())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn nur_c2_lite_custom() {
+        let liste = "Device 11:22:33:44:55:66 Lautsprecher\n\
+                     Device 11:22:33:44:55:77 C2 Lite dazi(BLE)\n\
+                     Device 11:22:33:44:55:88 Mobapad C2-lite\n\
+                     Device 11:22:33:44:55:99 Xbox Wireless Controller\n";
+        assert_eq!(super::c2_adressen(liste), ["11:22:33:44:55:77"]);
+    }
 }

@@ -114,6 +114,52 @@ pub fn custom_abbild(sicherung: &[u8], jl_isd: &[u8]) -> Result<Vec<u8>> {
     Ok(s)
 }
 
+/// Platine, für die ein Flash-Inhalt (Sicherung) oder ein Abbild (jl_isd.bin) gebaut ist
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platine {
+    C2Lite,
+    Chitu,
+}
+
+impl Platine {
+    pub fn name(self) -> &'static str {
+        match self {
+            Platine::C2Lite => "C2 Lite",
+            Platine::Chitu => "Chitu 2 HD",
+        }
+    }
+}
+
+/// Platine aus Flash-Inhalt oder Abbild bestimmen: Jieli-ENC-Container liegen an 4-KB-Grenzen + 0x20. Entschlüsselt
+/// enthält die Werks-Firmware ihren Gerätenamen („Mobapad C2-lite“ bzw. „Mobapad-Pro2-HD“, belegt an beiden
+/// Werks-Sicherungen, 4.11.2026), die eigene Firmware ihre info-Zeile („firmware=c2lite-custom stand=…“, beim Chitu mit
+/// „ geraet=chitu“, bei der Generalprobe „ geraet=chitu-probe“ = C2-Platine). None = nicht erkannt.
+pub fn platine(d: &[u8]) -> Option<Platine> {
+    const FENSTER: usize = 0x80000;
+    let mut start = 0;
+    while start + 0x20 < d.len() {
+        let c = start + 0x20;
+        let ende = (c + FENSTER).min(d.len());
+        let mut x = d[c..ende].to_vec();
+        for (i, blk) in x.chunks_mut(32).enumerate() {
+            enc_block(blk, ENC_SCHLUESSEL ^ (((i * 32) >> 2) as u16));
+        }
+        let hat = |m: &[u8]| x.windows(m.len()).any(|w| w == m);
+        if hat(b"firmware=c2lite-custom stand=") {
+            let chitu = x.windows(13).enumerate().any(|(i, w)| w == b" geraet=chitu" && !x[i + 13..].starts_with(b"-probe"));
+            return Some(if chitu { Platine::Chitu } else { Platine::C2Lite });
+        }
+        if hat(b"Mobapad-Pro2-HD") {
+            return Some(Platine::Chitu);
+        }
+        if hat(b"Mobapad C2-lite") {
+            return Some(Platine::C2Lite);
+        }
+        start += 0x1000;
+    }
+    None
+}
+
 /// Liegt in der Bank die Brücke? App-Anfang des Containers entschlüsseln und mit warte_auf_usb.bin vergleichen
 fn ist_bruecke(sicherung: &[u8], bank: usize) -> bool {
     let c = bank + 0x20;
@@ -224,5 +270,69 @@ mod tests {
         let w = werk_abbild(&s).unwrap();
         assert!(w[..0x7D000] == vorher[..0x7D000] && w[0xD2000..] == vorher[0xD2000..]);
         assert!(werk_abbild(&vorher).is_err(), "Sicherung ohne Brücke muss abgelehnt werden");
+    }
+}
+
+#[cfg(test)]
+mod tests_platine {
+    use super::{platine, Platine};
+
+    fn enc(d: &[u8]) -> Vec<u8> {
+        let mut d = d.to_vec();
+        for (i, blk) in d.chunks_mut(32).enumerate() {
+            super::enc_block(blk, super::ENC_SCHLUESSEL ^ (((i * 32) >> 2) as u16));
+        }
+        d
+    }
+
+    /// Flash mit einem Container bei 0x3020 (wie die Werks-Firmware)
+    fn flash_mit(text: &[u8]) -> Vec<u8> {
+        let mut f = vec![0xFFu8; 0x10000];
+        let mut c = vec![0u8; 0x400];
+        c[0x100..0x100 + text.len()].copy_from_slice(text);
+        let e = enc(&c);
+        f[0x3020..0x3020 + e.len()].copy_from_slice(&e);
+        f
+    }
+
+    #[test]
+    fn platine_erkennen() {
+        assert_eq!(platine(&flash_mit(b"Mobapad-Pro2-HDreset led config")), Some(Platine::Chitu));
+        assert_eq!(platine(&flash_mit(b"Mobapad C2-litePro Controller")), Some(Platine::C2Lite));
+        assert_eq!(platine(&flash_mit(b"info: firmware=c2lite-custom stand=chitu-CRd geraet=chitu gebaut")), Some(Platine::Chitu));
+        assert_eq!(platine(&flash_mit(b"info: firmware=c2lite-custom stand=chitu-CRd-probe geraet=chitu-probe gebaut")), Some(Platine::C2Lite));
+        assert_eq!(platine(&flash_mit(b"info: firmware=c2lite-custom stand=16o gebaut")), Some(Platine::C2Lite));
+        assert_eq!(platine(&flash_mit(b"irgendwas")), None);
+    }
+
+    /// Mit echten Sicherungen und Abbildern aus $C2LITE_TESTDATEN (nicht im Repo; ohne die Variable übersprungen)
+    #[test]
+    fn echte_dateien() {
+        let Ok(t) = std::env::var("C2LITE_TESTDATEN") else { return };
+        let faelle = [
+            (format!("{t}/chitu-werk.bin"), Platine::Chitu),
+            (format!("{t}/c2-werk.bin"), Platine::C2Lite),
+            (format!("{t}/chitu-jl_isd.bin"), Platine::Chitu),
+            (format!("{t}/probe-jl_isd.bin"), Platine::C2Lite),
+            (format!("{t}/c2-jl_isd.bin"), Platine::C2Lite),
+        ];
+        for (p, soll) in faelle {
+            if let Ok(d) = std::fs::read(&p) {
+                assert_eq!(platine(&d), Some(soll), "{p}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_rueckweg {
+    /// Chitu-Werks-Sicherung (USB-Weg, keine Brücke) geht 1:1 zurück – mit $C2LITE_TESTDATEN (nicht im Repo)
+    #[test]
+    fn chitu_werk_sicherung_unveraendert() {
+        let Ok(t) = std::env::var("C2LITE_TESTDATEN") else { return };
+        if let Ok(d) = std::fs::read(format!("{t}/chitu-werk.bin")) {
+            let w = super::werk_abbild(&d).expect("Chitu-Werks-Sicherung muss als Rückweg gelten");
+            assert_eq!(w, d);
+        }
     }
 }

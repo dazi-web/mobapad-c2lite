@@ -202,16 +202,48 @@ fn im_download_modus(
     eigentuemer(ordner, uid, gid);
     eigentuemer(&datei, uid, gid);
     zeile(&format!("SCHRITT Sicherung gespeichert: ~/c2lite-sicherung/{}", datei.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
+    // Platine prüfen, bevor geschrieben wird: im ROM-Modus gibt es keine info-Zeile, also aus dem gelesenen Flash
+    // (Werks-Name bzw. Kennung der eigenen Firmware) und aus dem Abbild. Nie eine Firmware für die andere Platine.
+    let hw = abbild::platine(&sicherung);
+    let img = abbild::platine(jl_isd);
+    match (hw, img) {
+        (Some(h), Some(i)) if h == i => zeile(&format!("SCHRITT Platine erkannt: {} (Firmware passt)", h.name())),
+        (Some(h), Some(i)) => {
+            d.neustart();
+            let tipp = if h == abbild::Platine::Chitu {
+                format!(" {}", crate::sprache::t("Für das Chitu 2 HD: release/chitu/jl_isd.bin angeben."))
+            } else {
+                String::new()
+            };
+            return Err(Error::other(crate::sprache::tr(
+                "Diese Firmware ist für das {}, angeschlossen ist ein {}. Abgebrochen, nichts geschrieben; der Controller \
+                 startet unverändert neu.{}",
+                &[&i.name(), &h.name(), &tipp],
+            )));
+        }
+        (None, _) => {
+            d.neustart();
+            return Err(Error::other(
+                "Die Platine ließ sich aus dem Speicher nicht erkennen (weder Werks- noch eigene Firmware). Abgebrochen, \
+                 nichts geschrieben.",
+            ));
+        }
+        (Some(_), None) => {
+            d.neustart();
+            return Err(Error::other("Die Firmware-Datei ist kein Abbild von C2 Lite Custom oder Chitu. Abgebrochen, nichts geschrieben."));
+        }
+    }
     let soll = abbild::custom_abbild(&sicherung, jl_isd)?;
     if probelauf {
         d.neustart();
         zeile(
             "FERTIG Probelauf erfolgreich: Download-Modus erreicht, Speicher gesichert, Abbild gebaut. Nichts wurde geschrieben; \
-             der Controller startet mit der Werks-Firmware neu.",
+             der Controller startet unverändert neu.",
         );
         return Ok(());
     }
-    zeile("SCHRITT C2 Lite Custom schreiben");
+    let chitu = hw == Some(abbild::Platine::Chitu);
+    zeile(if chitu { "SCHRITT Chitu-Firmware schreiben" } else { "SCHRITT C2 Lite Custom schreiben" });
     d.schreiben(0, &soll[..abbild::BEREICH_ENDE], &mut |f| zeile(&format!("FORTSCHRITT {f:.3}")))?;
     zeile("SCHRITT Prüfen");
     let zurueck = d.lesen(0, abbild::BEREICH_ENDE as u32, &mut |f| zeile(&format!("FORTSCHRITT {f:.3}")))?;
@@ -221,7 +253,11 @@ fn im_download_modus(
         ));
     }
     d.neustart();
-    zeile("FERTIG C2 Lite Custom ist installiert und geprüft. Der Controller startet neu.");
+    zeile(if chitu {
+        "FERTIG Chitu 2 HD Custom ist installiert und geprüft. Der Controller startet neu."
+    } else {
+        "FERTIG C2 Lite Custom ist installiert und geprüft. Der Controller startet neu."
+    });
     Ok(())
 }
 
@@ -424,7 +460,7 @@ pub fn starten(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn FnMut(
     if probelauf {
         args.push("probelauf".into());
     }
-    kern_ausfuehren(&args, "installation", melden)
+    kern_ausfuehren(&args, "installation", !probelauf, melden)
 }
 
 /// USB-Weg (Home + Y + X, docs/WERKS-DOWNLOAD.md): nur Lader laden und den Geräte-Teil über pkexec ausführen; keine
@@ -443,7 +479,7 @@ pub fn starten_usb(firmware: Option<&Path>, probelauf: bool, melden: &mut dyn Fn
     if probelauf {
         args.push("probelauf".into());
     }
-    kern_ausfuehren(&args, if probelauf { "probelauf-usb" } else { "installation-usb" }, melden)
+    kern_ausfuehren(&args, if probelauf { "probelauf-usb" } else { "installation-usb" }, !probelauf, melden)
 }
 
 /// Rückweg zur Werks-Firmware aus einer Sicherung der Installation (~/c2lite-sicherung/werk-sicherung-*.bin)
@@ -463,7 +499,7 @@ pub fn werk_zurueck(sicherung: &Path, melden: &mut dyn FnMut(Meldung)) -> Result
         sicherungsordner().into(),
         benutzer_text().into(),
     ];
-    kern_ausfuehren(&args, "rueckweg", melden)
+    kern_ausfuehren(&args, "rueckweg", false, melden)
 }
 
 /// Neueste Sicherung aus „Installieren“, falls vorhanden
@@ -483,8 +519,14 @@ fn benutzer_text() -> String {
     format!("{}:{}", unsafe { libc::getuid() }, unsafe { libc::getgid() })
 }
 
-/// Geräte-Teil über pkexec ausführen und seine Zeilen als Meldungen weitergeben; stderr geht ins Protokoll
-fn kern_ausfuehren(args: &[std::ffi::OsString], name: &str, melden: &mut dyn FnMut(Meldung)) -> Result<()> {
+/// Geräte-Teil über pkexec ausführen und seine Zeilen als Meldungen weitergeben; stderr geht ins Protokoll.
+/// `kopplung_entfernen`: nach Erfolg die alte Bluetooth-Kopplung des Rechners entfernen (Installation, VM frisch)
+fn kern_ausfuehren(
+    args: &[std::ffi::OsString],
+    name: &str,
+    kopplung_entfernen: bool,
+    melden: &mut dyn FnMut(Meldung),
+) -> Result<()> {
     let ordner = sicherungsordner();
     std::fs::create_dir_all(&ordner)?;
     let protokoll_pfad = ordner.join(format!("{name}-{}.log", zeitstempel()));
@@ -513,7 +555,16 @@ fn kern_ausfuehren(args: &[std::ffi::OsString], name: &str, melden: &mut dyn FnM
     }
     let status = kind.wait()?;
     match ergebnis {
-        Some(Ok(t)) => {
+        Some(Ok(mut t)) => {
+            if kopplung_entfernen {
+                let entfernt = crate::bt_pc::alte_kopplungen_entfernen();
+                if !entfernt.is_empty() {
+                    t.push(' ');
+                    t.push_str(crate::sprache::t(
+                        "Die alte Bluetooth-Kopplung dieses Rechners wurde entfernt; für Bluetooth am PC den Controller neu koppeln.",
+                    ));
+                }
+            }
             melden(Meldung::Fertig(t));
             Ok(())
         }

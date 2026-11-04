@@ -45,7 +45,7 @@ async fn suchen(adresse: Option<&str>) -> Result<(Peripheral, String), String> {
     let passt = |name: &Option<String>, adr: &str| -> bool {
         match adresse {
             Some(a) => adr.eq_ignore_ascii_case(a),
-            None => name.as_deref().is_some_and(|n| n.contains("C2 Lite")),
+            None => name.as_deref().is_some_and(|n| n.contains("C2 Lite") || n.contains("Chitu")),
         }
     };
     // Schon verbundene oder bekannte Geräte zuerst, sonst kurz suchen

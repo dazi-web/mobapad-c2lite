@@ -59,11 +59,54 @@ Command line: `c2lite-custom installieren --usb [--probelauf] [own-jl_isd.bin]`.
    official update path (4 to 6 minutes).
 3. When asked, plug in the USB cable. Continue as above.
 
-Afterwards: slider on PC for the computer, on Switch for the Switch 2. Pair once on the Switch 2 under
-"Change Grip/Order".
+Afterwards: slider on PC for the computer, on Switch for the Switch. From firmware stage 14: hold **Minus** while sliding to Switch = Switch 1,
+**Plus** = Switch 2 (logo blinks cyan once or twice, the choice is stored). Pair once on the Switch under
+"Change Grip/Order". Installing clears the controller's settings storage, so the program removes this computer's
+old Bluetooth pairing with "C2 Lite dazi" itself. Pair again to use Bluetooth on the PC.
 
 Installing is not possible on Windows. The controller should work there as an Xbox controller without drivers; this
 is untested.
+
+## Chitu 2 HD (experimental)
+
+The Mobapad Chitu 2 HD (over Bluetooth "Mobapad-Pro2-HD") has the same chip but a different board: the sticks come
+from a separate chip, the vibration from two linear motors on the audio DAC ("HD rumble"). It has its own build variant
+of the firmware (`sdk-arbeit/chitu-sdk-aenderungen.patch`, ready-made in [`release/chitu/`](release/chitu/)).
+The C2 Lite firmware does **not** fit the Chitu and vice versa; the program checks this before every write.
+
+Working (tested on one unit):
+
+- PC: Xbox controller over USB (Linux without kernel parameter) and Bluetooth LE, all buttons, both sticks,
+  L2/R2 digital (as with the factory firmware)
+- Rumble from games on both linear motors (left motor 160 Hz, right 320 Hz, as with the factory firmware)
+- Melodies on the motors: `c2lite-custom musik <file>` or the "Musik" page in the program (note format below)
+- Updates over the USB cable, way back to the factory firmware
+
+Missing so far: Switch / Switch 2, lights (logo, player LEDs), motion sensor, NFC. Known: a rare restart by the
+watchdog (the controller is back after ~4 s); the cause is being investigated, the program saves the log to
+`~/.cache/c2lite-custom/`.
+
+Install (Linux only, USB cable only):
+
+```
+c2lite-custom installieren release/chitu/jl_isd.bin --usb
+```
+
+Unplug the cable, wait until the Chitu is off, switch it on without the cable with a short press on Home, plug in the
+cable. When it rumbles in a rhythm, hold Home + Y + X until the rumbling stops. The program backs up the whole memory to
+`~/c2lite-sicherung/werk-sicherung-*.bin`, detects the board, writes, reads back and restarts.
+
+- Update: `c2lite-custom update release/chitu/db_update_data.bin` (or the "Firmware" page)
+- Back to the factory firmware: `c2lite-custom werk-zurueck ~/c2lite-sicherung/werk-sicherung-<time>.bin`
+- Rescue without opening: Home + Y + X for 3 s with a PC on the cable starts the ROM download mode; Home for 10 s
+  restarts. If the firmware fails to start stably several times in a row, it waits instead of restarting in a loop
+  (so far this guard has only been triggered on the C2 Lite with the same firmware).
+- With a C2 Lite and a Chitu plugged in at the same time, the command line asks for `--port`; the program window has a
+  selector at the bottom left.
+
+Note format for `musik`: name + octave (`A3`, `C#4`, `H3` = B3) or a frequency in Hz, duration `:ms`, rest `P`,
+comment `#`, e.g. [`docs/beispiel-melodie.txt`](docs/beispiel-melodie.txt). It sounds clearest between about 250 and
+700 Hz; put the controller on a table.
 
 ## Risks
 
@@ -107,7 +150,8 @@ The program is in English and German; tools and most documents are in German. Co
 words (`installieren` = install, `sicherung` = backup, `werk` = factory); `c2lite-custom help` explains them in English.
 
 Folders: `c2lite-custom/` program, `sdk-arbeit/sdk-aenderungen.patch` firmware (changes to the Jieli SDK),
-`release/` prebuilt firmware, `werkzeuge/` building, packing, download mode, `c6-rettung/` rescue sender.
+`sdk-arbeit/chitu-sdk-aenderungen.patch` the same for the Chitu 2 HD, `release/` prebuilt firmware (`release/chitu/`
+for the Chitu), `werkzeuge/` building, packing, download mode, `c6-rettung/` rescue sender.
 
 Thanks to [kagaimiq](https://github.com/kagaimiq) (jl-uboot-tool and Jieli documentation),
 [ndeadly](https://github.com/ndeadly/switch2_controller_research) (Switch 2 protocol) and the ESP32 projects listed in

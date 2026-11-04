@@ -155,6 +155,7 @@ c2lite-custom download-modus         jump into the ROM download mode (for flashi
 | Input | Effect |
 |---|---|
 | Slider | PC, off, Switch (changing it restarts the controller) |
+| Hold Minus / Plus while sliding to Switch | Minus = Switch 1 (classic Pro Controller, logo blinks cyan once), Plus = Switch 2 (Pro Controller 2, twice); stored |
 | Light key short | next light mode |
 | Hold light key 3 s | record buttons, finish with back 1, back 2 or M |
 | Light + button | turbo of that button: while held → automatic → off |
@@ -192,7 +193,7 @@ lines, so everything alternates within the 10 ms polling round.
 From stage 11 on, with the slider on Switch the C2 Lite is a **Pro Controller 2** over Bluetooth LE: pair, play, wake
 without a Joy-Con. Details and the knowledge for your own implementations: [`PRO-CONTROLLER-2.en.md`](PRO-CONTROLLER-2.en.md).
 
-The previous way (Switch 1 Pro Controller over Bluetooth Classic) can be selected with `pro2 klassisch`:
+The previous way (Switch 1 Pro Controller over Bluetooth Classic) can be selected by holding Minus while sliding to Switch (Plus = back to Switch 2), or with `pro2 klassisch`:
 
 1. **Register:** slider to Switch, connect to the Switch 2 with a USB cable (top port, "Pro Controller Wired
    Communication" enabled), confirm in "Change Grip/Order". Wireless afterwards.

@@ -58,11 +58,54 @@ Kommandozeile: `c2lite-custom installieren --usb [--probelauf] [eigene-jl_isd.bi
    eine kleine Brücke (4 bis 6 Minuten).
 3. Auf Aufforderung das USB-Kabel einstecken. Weiter wie oben.
 
-Danach: Schieber auf PC für den Rechner, auf Switch für die Switch 2. An der Switch 2 einmal unter
-„Griff/Reihenfolge ändern“ koppeln.
+Danach: Schieber auf PC für den Rechner, auf Switch für die Switch. Ab Firmware-Stufe 14: beim Schieben auf Switch **Minus** halten = Switch 1,
+**Plus** = Switch 2 (Logo blinkt 1× bzw. 2× türkis, die Wahl bleibt gespeichert). An der Switch einmal unter
+„Griff/Reihenfolge ändern“ koppeln. Die Installation leert den Einstellungsspeicher des Controllers; eine alte
+Bluetooth-Kopplung dieses Rechners mit „C2 Lite dazi“ entfernt das Programm deshalb selbst. Für Bluetooth am PC neu koppeln.
 
 Unter Windows ist das Installieren nicht möglich. Der Controller sollte dort als Xbox-Controller ohne Treiber laufen,
 getestet ist das nicht.
+
+## Chitu 2 HD (experimentell)
+
+Der Mobapad Chitu 2 HD (per Bluetooth „Mobapad-Pro2-HD“) hat denselben Chip, aber eine andere Platine: die Sticks
+liefert ein eigener Baustein, die Vibration kommt aus zwei Linearmotoren am Audio-DAC („HD-Rumble“). Dafür gibt es eine
+eigene Bauvariante der Firmware (`sdk-arbeit/chitu-sdk-aenderungen.patch`, fertig in [`release/chitu/`](release/chitu/)).
+Die C2-Lite-Firmware passt **nicht** auf das Chitu und umgekehrt; das Programm prüft das vor jedem Schreiben.
+
+Läuft (an einem Gerät getestet):
+
+- PC: Xbox-Controller per USB (Linux ohne Kernel-Parameter) und per Bluetooth LE, alle Tasten, beide Sticks,
+  L2/R2 digital (wie die Werks-Firmware)
+- Vibration aus Spielen auf beide Linearmotoren (linker Motor 160 Hz, rechter 320 Hz, wie die Werks-Firmware)
+- Melodien über die Motoren: `c2lite-custom musik <datei>` oder Seite „Musik“ im Programm (Notenformat unten)
+- Updates per USB-Kabel, Rückweg zur Werks-Firmware
+
+Fehlt noch: Switch / Switch 2, Licht (Logo, Spieler-LEDs), Bewegungssensor, NFC. Bekannt: selten ein Neustart durch den
+Watchdog (der Controller ist nach ~4 s wieder da); die Ursache wird gesucht, das Programm sichert dabei das Protokoll
+nach `~/.cache/c2lite-custom/`.
+
+Installieren (nur Linux, nur über das USB-Kabel):
+
+```
+c2lite-custom installieren release/chitu/jl_isd.bin --usb
+```
+
+Kabel abziehen, warten bis das Chitu aus ist, ohne Kabel mit einem kurzen Druck auf Home einschalten, Kabel anstecken.
+Wenn es im Takt brummt, Home + Y + X halten, bis das Brummen aufhört. Das Programm sichert den ganzen Speicher nach
+`~/c2lite-sicherung/werk-sicherung-*.bin`, erkennt die Platine, schreibt, liest zurück und startet neu.
+
+- Update: `c2lite-custom update release/chitu/db_update_data.bin` (oder Seite „Firmware“)
+- Zurück zur Werks-Firmware: `c2lite-custom werk-zurueck ~/c2lite-sicherung/werk-sicherung-<zeit>.bin`
+- Rettung ohne Öffnen: Home + Y + X 3 s mit PC am Kabel startet den ROM-Download-Modus; Home 10 s startet neu.
+  Startet die Firmware mehrmals hintereinander nicht stabil, wartet sie, statt in einer Schleife neu zu starten
+  (diese Bremse ist bisher nur am C2 Lite mit derselben Firmware ausgelöst worden).
+- Stecken C2 Lite und Chitu gleichzeitig, fragt das Programm auf der Kommandozeile nach `--port`; in der Oberfläche
+  gibt es unten links eine Auswahl.
+
+Notenformat für `musik`: Name + Oktave (`A3`, `C#4`, `H3`) oder Frequenz in Hz, Dauer `:ms`, Pause `P`, Kommentar `#`,
+z. B. [`docs/beispiel-melodie.txt`](docs/beispiel-melodie.txt). Am deutlichsten klingt es zwischen etwa 250 und 700 Hz,
+den Controller auf den Tisch legen.
 
 ## Risiken
 
@@ -104,7 +147,8 @@ Die Bluetooth-Berichtsbeschreibung des Xbox Wireless Controller stammt aus
   Bluetooth-Brücke und ohne ESP32 ([English](docs/WERKS-DOWNLOAD.en.md))
 
 Ordner: `c2lite-custom/` Programm, `sdk-arbeit/sdk-aenderungen.patch` Firmware (Änderungen am Jieli-SDK),
-`release/` fertige Firmware, `werkzeuge/` Bauen, Packen, Download-Modus, `c6-rettung/` Rettungssender.
+`sdk-arbeit/chitu-sdk-aenderungen.patch` dasselbe für das Chitu 2 HD, `release/` fertige Firmware (`release/chitu/`
+fürs Chitu), `werkzeuge/` Bauen, Packen, Download-Modus, `c6-rettung/` Rettungssender.
 
 Danke an [kagaimiq](https://github.com/kagaimiq) (jl-uboot-tool und Jieli-Doku),
 [ndeadly](https://github.com/ndeadly/switch2_controller_research) (Switch-2-Protokoll) und die in

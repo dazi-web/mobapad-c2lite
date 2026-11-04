@@ -39,6 +39,8 @@ pub enum Auftrag {
     Update(Vec<u8>),
     /// Wecksignal eines Joy-Con 2 auffangen und die Kennung im Controller speichern; das Flag bricht ab
     WeckenEinrichten(Arc<AtomicBool>),
+    /// Musik am Chitu: Befehle in die Warteschlange der Firmware; das Flag bricht ab (dann „chitu ton stop“)
+    Musik(Vec<String>, Arc<AtomicBool>),
 }
 
 pub enum Meldung {
@@ -50,7 +52,59 @@ pub enum Meldung {
     Fortschritt(f32),
     UpdateFertig(Result<(), String>),
     WeckenFertig(Result<Kennung, String>),
+    /// alle Töne angenommen (oder abgebrochen); die Musik selbst läuft noch
+    MusikGesendet(Result<(), String>),
+    /// Hinweis für die Meldungszeile (Text auf Deutsch, wird übersetzt); true = als Fehler zeigen
+    Hinweis(String, bool),
 }
+
+/// Hat sich der Controller am USB neu angemeldet (anderes Gerät hinter dem Port, z. B. nach Watchdog-Neustart oder
+/// Ruhezustand des PCs)? Dann ist die offene Verbindung tot, obwohl wieder ein Controller da ist.
+fn usb_gewechselt(k: &dyn Kanal) -> bool {
+    match (k.usb_ziel(), geraet::finden()) {
+        (Some(alt), Some(p)) => geraet::serie(&p) == geraet::serie(&k.name()) && std::fs::canonicalize(p).ok().is_some_and(|neu| neu != alt),
+        _ => false,
+    }
+}
+
+/// Ist der verbundene Controller abgezogen, während ein anderer steckt? (finden() fällt dann auf den anderen zurück;
+/// der Nutzer soll das sehen und selbst wählen, statt dass die Oberfläche still umschwenkt)
+fn usb_anderer(k: &dyn Kanal) -> bool {
+    k.usb_ziel().is_some() && geraet::finden().is_some_and(|p| geraet::serie(&p) != geraet::serie(&k.name()))
+}
+
+/// Meldung zu einem beim Verbinden gesicherten Nachlass (Controller war vorher abgestürzt oder neu gestartet)
+fn nachlass_hinweis(k: &mut dyn Kanal, senden: &dyn Fn(Meldung)) {
+    if let Some(d) = k.nachlass_datei() {
+        senden(Meldung::Hinweis(
+            crate::sprache::tr("Protokoll des letzten Laufs gesichert: {}", &[&d.display()]),
+            false,
+        ));
+    }
+}
+
+/// USB neu öffnen (nach Gerätewechsel oder Verbindungsfehler); meldet Verbunden + Hinweis
+fn usb_neu(kanal: &mut Option<Box<dyn Kanal>>, senden: &dyn Fn(Meldung)) -> bool {
+    *kanal = None;
+    match verbinden(Weg::Usb) {
+        Ok(mut k) => {
+            let name = k.name();
+            senden(Meldung::Verbunden(Weg::Usb, name));
+            senden(Meldung::Hinweis(
+                "Der Controller hat sich am USB neu angemeldet (Neustart oder Ruhezustand des PCs). Automatisch neu verbunden.".into(),
+                false,
+            ));
+            nachlass_hinweis(k.as_mut(), senden);
+            *kanal = Some(k);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Text für einen Verbindungsfehler, den auch Laien verstehen
+const VERBINDUNG_WEG: &str =
+    "Verbindung zum Controller unterbrochen (Neustart, Ruhezustand oder Kabel). Bitte Kabel prüfen und neu verbinden.";
 
 const PRAEFIXE: &[&str] = &[
     "ok:", "fehler:", "info:", "status:", "einstellungen:", "akku:", "motor:", "switch:", "log:", "belegung:",
@@ -79,12 +133,13 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     kanal = None;
                     senden(Meldung::Sucht(weg));
                     match verbinden(weg) {
-                        Ok(k) => {
+                        Ok(mut k) => {
                             let name = k.name();
-                            kanal = Some(k);
                             kanal_weg = weg;
                             fehler_in_folge = 0;
                             senden(Meldung::Verbunden(weg, name));
+                            nachlass_hinweis(k.as_mut(), &senden);
+                            kanal = Some(k);
                         }
                         Err(e) => senden(Meldung::Getrennt(Some(e))),
                     }
@@ -95,23 +150,28 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                 }
                 Ok(Auftrag::Live(an)) => live = an,
                 Ok(Auftrag::Befehle(zweck, befehle)) => {
+                    let ausfuehren = |k: &mut Box<dyn Kanal>| -> Result<Vec<String>, String> {
+                        let mut alle = Vec::new();
+                        for b in &befehle {
+                            alle.extend(k.befehl_alle(b, PRAEFIXE, Duration::from_secs(3))?);
+                        }
+                        Ok(alle)
+                    };
                     let Some(k) = kanal.as_mut() else {
                         senden(Meldung::Antwort(zweck, Err("Nicht verbunden".into())));
                         continue;
                     };
-                    let mut alle = Vec::new();
-                    let mut ergebnis = Ok(());
-                    for b in &befehle {
-                        match k.befehl_alle(b, PRAEFIXE, Duration::from_secs(3)) {
-                            Ok(z) => alle.extend(z),
-                            Err(e) => {
-                                ergebnis = Err(e);
-                                break;
-                            }
-                        }
+                    let mut ergebnis = ausfuehren(k);
+                    // Port tot (Controller neu angemeldet)? Einmal neu verbinden und wiederholen
+                    if kanal_weg == Weg::Usb && ergebnis.as_ref().is_err_and(|e| geraet::ist_verbindungsfehler(e)) {
+                        ergebnis = if usb_neu(&mut kanal, &senden) {
+                            ausfuehren(kanal.as_mut().unwrap())
+                        } else {
+                            Err(VERBINDUNG_WEG.into())
+                        };
                     }
                     let fehlgeschlagen = ergebnis.is_err();
-                    senden(Meldung::Antwort(zweck, ergebnis.map(|_| alle)));
+                    senden(Meldung::Antwort(zweck, ergebnis));
                     if fehlgeschlagen && usb_weg(&kanal, kanal_weg) {
                         kanal = None;
                         senden(Meldung::Getrennt(Some("Controller nicht mehr am USB".into())));
@@ -151,12 +211,29 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     });
                     senden(Meldung::WeckenFertig(r));
                 }
+                Ok(Auftrag::Musik(befehle, abbruch)) => {
+                    let Some(k) = kanal.as_mut() else {
+                        senden(Meldung::MusikGesendet(Err("Nicht verbunden".into())));
+                        continue;
+                    };
+                    let mut r = crate::musik::abspielen(k.as_mut(), &befehle, &abbruch);
+                    if kanal_weg == Weg::Usb && r.as_ref().is_err_and(|e| geraet::ist_verbindungsfehler(e)) {
+                        r = if usb_neu(&mut kanal, &senden) {
+                            crate::musik::abspielen(kanal.as_mut().unwrap().as_mut(), &befehle, &abbruch)
+                        } else {
+                            Err(VERBINDUNG_WEG.into())
+                        };
+                    }
+                    senden(Meldung::MusikGesendet(r));
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     if letzte_pruefung.elapsed() >= Duration::from_secs(2) {
                         letzte_pruefung = Instant::now();
-                        if usb_weg(&kanal, kanal_weg) {
+                        if usb_weg(&kanal, kanal_weg) || (kanal_weg == Weg::Usb && kanal.as_deref().is_some_and(usb_anderer)) {
                             kanal = None;
                             senden(Meldung::Getrennt(Some("Controller nicht mehr am USB".into())));
+                        } else if kanal_weg == Weg::Usb && kanal.as_deref().is_some_and(usb_gewechselt) && !usb_neu(&mut kanal, &senden) {
+                            senden(Meldung::Getrennt(Some(VERBINDUNG_WEG.into())));
                         }
                     }
                 }
@@ -193,13 +270,17 @@ fn verbinden(weg: Weg) -> Result<Box<dyn Kanal>, String> {
                 "Kein Controller am USB gefunden. Kabel stecken und Schieber auf PC stellen (im Switch-Modus gibt es \
                  über USB keinen Befehlskanal, dann Bluetooth nutzen).",
             )?;
-            Ok(Box::new(Geraet::oeffnen(&pfad).map_err(|e| {
+            let g = Geraet::oeffnen(&pfad).map_err(|e| {
                 if cfg!(target_os = "linux") {
                     crate::sprache::tr("{}. Tipp: Benutzer in die Gruppe dialout aufnehmen und neu anmelden.", &[&e])
                 } else {
                     e
                 }
-            })?))
+            })?;
+            // Verbundenes Gerät merken: steckt später ein zweiter Controller an, bleibt die Verbindung bei diesem
+            // (sonst hielte die Gerätewechsel-Prüfung den neuen, in der Liste vorderen für einen Wechsel)
+            geraet::waehlen(Some(geraet::serie(&pfad)));
+            Ok(Box::new(g))
         }
         Weg::Bluetooth => Ok(Box::new(crate::ble::BleGeraet::verbinden(None)?)),
     }

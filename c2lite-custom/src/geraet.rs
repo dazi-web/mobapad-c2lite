@@ -17,6 +17,15 @@ pub trait Kanal {
     /// Befehl senden und auf die erste Zeile mit einem der Präfixe warten (Text ab dem Präfix)
     fn befehl(&mut self, befehl: &str, praefixe: &[&str], warten: Duration) -> Result<String, String>;
     fn name(&self) -> String;
+    /// USB: echtes Gerät hinter dem Port beim Öffnen (z. B. /dev/ttyACM0); ändert es sich, hat sich der Controller neu
+    /// angemeldet (Neustart, Ruhezustand) und die Verbindung ist tot
+    fn usb_ziel(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+    /// Beim Öffnen gesicherter Nachlass eines abgestürzten Laufs (nur einmal abholbar)
+    fn nachlass_datei(&mut self) -> Option<std::path::PathBuf> {
+        None
+    }
     /// Befehl senden und alle Zeilen mit einem der Präfixe sammeln, bis `warten` abgelaufen ist
     fn befehl_alle(&mut self, befehl: &str, praefixe: &[&str], warten: Duration) -> Result<Vec<String>, String> {
         let mut zeilen = vec![self.befehl(befehl, praefixe, warten)?];
@@ -31,29 +40,88 @@ pub trait Kanal {
 pub struct Geraet {
     port: BufReader<Box<dyn serialport::SerialPort>>,
     pub pfad: String,
+    ziel: Option<std::path::PathBuf>,
+    nachlass: Option<std::path::PathBuf>,
+    /// angefangene Zeile: bleibt erhalten, wenn die Wartezeit mitten in einer Zeile abläuft (sonst ging der
+    /// Zeilenanfang verloren, z. B. eine info-Zeile, deren Ende erst mit der nächsten Protokollzeile kommt)
+    teil: Vec<u8>,
 }
 
-/// Sucht den seriellen Port des Controllers. Unter Linux über /dev/serial/by-id (ohne libudev), sonst über die
-/// USB-Kennung, die serialport meldet.
-pub fn finden() -> Option<String> {
+/// Alle Controller mit eigener Firmware am USB: (Port, Anzeigename). Unter Linux über /dev/serial/by-id (ohne
+/// libudev), sonst über die USB-Kennung, die serialport meldet. Sortiert, damit die Reihenfolge stabil ist.
+pub fn alle() -> Vec<(String, String)> {
     #[cfg(target_os = "linux")]
     {
-        let eintraege = std::fs::read_dir("/dev/serial/by-id").ok()?;
+        let Ok(eintraege) = std::fs::read_dir("/dev/serial/by-id") else {
+            return Vec::new();
+        };
         let mut treffer: Vec<String> = eintraege
             .filter_map(|e| e.ok())
             .map(|e| e.path().to_string_lossy().into_owned())
             .filter(|p| (p.contains("dazi") || p.contains("Jieli")) && p.ends_with("-if01"))
             .collect();
         treffer.sort();
-        treffer.into_iter().next()
+        treffer.into_iter().map(|p| {
+            let a = anzeige(&p);
+            (p, a)
+        }).collect()
     }
     #[cfg(not(target_os = "linux"))]
     {
-        serialport::available_ports().ok()?.into_iter().find_map(|p| match p.port_type {
-            serialport::SerialPortType::UsbPort(u) if KENNUNGEN.contains(&(u.vid, u.pid)) => Some(p.port_name),
-            _ => None,
-        })
+        serialport::available_ports()
+            .map(|v| {
+                v.into_iter()
+                    .filter_map(|p| match p.port_type {
+                        serialport::SerialPortType::UsbPort(u) if KENNUNGEN.contains(&(u.vid, u.pid)) => {
+                            let name = u.product.unwrap_or_default();
+                            let serie = u.serial_number.unwrap_or_default();
+                            Some((p.port_name.clone(), format!("{} {}", kurzname(&name), kurz(&serie)).trim().to_string()))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
+}
+
+/// Seriennummer aus dem by-id-Namen („usb-dazi_<Produkt>_<Serie>-if01“); bleibt gleich, auch wenn sich der
+/// Produktname mit der Firmware ändert (Generalprobe-Firmware nennt sich am C2 Lite „Chitu 2 HD“)
+pub fn serie(pfad: &str) -> String {
+    let n = pfad.rsplit('/').next().unwrap_or(pfad).trim_end_matches("-if01");
+    n.rsplit('_').next().unwrap_or("").to_string()
+}
+
+fn kurz(serie: &str) -> String {
+    if serie.len() > 4 { format!("…{}", &serie[serie.len() - 4..]) } else { serie.to_string() }
+}
+
+fn kurzname(produkt: &str) -> &'static str {
+    if produkt.contains("Chitu") { "Chitu 2 HD" } else { "C2 Lite" }
+}
+
+/// „Chitu 2 HD …3215“ bzw. „C2 Lite …9401“
+pub fn anzeige(pfad: &str) -> String {
+    format!("{} {}", kurzname(pfad), kurz(&serie(pfad)))
+}
+
+/// Gewählter Controller (Seriennummer bzw. Port), wenn mehrere stecken (Oberfläche)
+static WAHL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn waehlen(serie_oder_port: Option<String>) {
+    *WAHL.lock().unwrap() = serie_oder_port;
+}
+
+/// Port des Controllers: der gewählte, wenn er steckt, sonst der erste
+pub fn finden() -> Option<String> {
+    let alle = alle();
+    let wahl = WAHL.lock().unwrap().clone();
+    if let Some(w) = wahl {
+        if let Some((p, _)) = alle.iter().find(|(p, _)| serie(p) == w || *p == w) {
+            return Some(p.clone());
+        }
+    }
+    alle.into_iter().next().map(|(p, _)| p)
 }
 
 impl Geraet {
@@ -62,10 +130,28 @@ impl Geraet {
             .timeout(Duration::from_millis(50))
             .open()
             .map_err(|e| format!("{pfad}: {e}"))?;
-        let mut g = Geraet { port: BufReader::new(port), pfad: pfad.to_string() };
+        let ziel = std::fs::canonicalize(pfad).ok();
+        let mut g = Geraet { port: BufReader::new(port), pfad: pfad.to_string(), ziel, nachlass: None, teil: Vec::new() };
         // Ältere Firmware (vor Stufe 2r) verwirft das erste Paket nach dem Öffnen: eine leere Zeile vorweg
         g.schreiben("")?;
-        std::thread::sleep(Duration::from_millis(100));
+        // Rückstau kurz mitlesen statt verwerfen: steht darin der Nachlass eines abgestürzten Laufs (die Firmware gibt
+        // ihn nur einmal beim Hochfahren aus), wird er als Datei gesichert (Fehlersuche nach Watchdog-Neustarts)
+        let mut rueckstau = String::new();
+        let ende = Instant::now() + Duration::from_millis(1500);
+        let mut still = 0;
+        while Instant::now() < ende && rueckstau.len() < 256 * 1024 && still < 4 {
+            match g.zeile() {
+                Some(z) => {
+                    still = 0;
+                    rueckstau.push_str(&z);
+                    rueckstau.push('\n');
+                }
+                None => still += 1,
+            }
+        }
+        if let Some(n) = nachlass_finden(&rueckstau) {
+            g.nachlass = nachlass_sichern(n);
+        }
         g.leeren();
         Ok(g)
     }
@@ -78,6 +164,7 @@ impl Geraet {
 
     /// Verwirft alles, was schon im Empfangspuffer liegt
     pub fn leeren(&mut self) {
+        self.teil.clear();
         let _ = self.port.get_mut().clear(serialport::ClearBuffer::Input);
         let n = self.port.buffer().len();
         self.port.consume(n);
@@ -85,10 +172,17 @@ impl Geraet {
 
     /// Nächste Zeile (ohne Zeilenende) oder None nach Ablauf der Port-Wartezeit
     pub fn zeile(&mut self) -> Option<String> {
-        let mut roh = Vec::new();
-        match self.port.read_until(b'\n', &mut roh) {
-            Ok(n) if n > 0 => Some(String::from_utf8_lossy(&roh).trim_end().to_string()),
-            _ => None,
+        // read_until hängt auch bei Zeitablauf schon Gelesenes an „teil“ an; erst bei „\n“ ist die Zeile fertig
+        let _ = self.port.read_until(b'\n', &mut self.teil);
+        if self.teil.last() == Some(&b'\n') {
+            let z = String::from_utf8_lossy(&self.teil).trim_end().to_string();
+            self.teil.clear();
+            Some(z)
+        } else {
+            if self.teil.len() > 64 * 1024 {
+                self.teil.clear(); // Schutz gegen endlose Zeilen
+            }
+            None
         }
     }
 
@@ -97,6 +191,14 @@ impl Geraet {
 impl Kanal for Geraet {
     fn name(&self) -> String {
         self.pfad.clone()
+    }
+
+    fn usb_ziel(&self) -> Option<std::path::PathBuf> {
+        self.ziel.clone()
+    }
+
+    fn nachlass_datei(&mut self) -> Option<std::path::PathBuf> {
+        self.nachlass.take()
     }
 
     /// Schickt einen Befehl und wartet auf die erste Zeile, die eines der Präfixe enthält. Gibt den Text ab dem
@@ -115,6 +217,50 @@ impl Kanal for Geraet {
         }
         Err(crate::sprache::tr("keine Antwort auf „{}“ (Firmware zu alt oder Controller beschäftigt?)", &[&befehl]))
     }
+}
+
+/// Nachlass-Block aus dem Rückstau (von „--- Nachlass des letzten Laufs“ bis „--- Ende Nachlass ---“)
+pub fn nachlass_finden(text: &str) -> Option<&str> {
+    let a = text.find("--- Nachlass des letzten Laufs")?;
+    let rest = &text[a..];
+    let e = rest.find("--- Ende Nachlass ---").map_or(rest.len(), |e| e + "--- Ende Nachlass ---".len());
+    Some(&rest[..e])
+}
+
+/// Nachlass nach $XDG_CACHE_HOME bzw. ~/.cache/c2lite-custom/nachlass-<zeit>.txt, die neuesten 20 bleiben
+fn nachlass_sichern(text: &str) -> Option<std::path::PathBuf> {
+    let Some(basis) = std::env::var_os("XDG_CACHE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+    else {
+        return None;
+    };
+    let ordner = basis.join("c2lite-custom");
+    if std::fs::create_dir_all(&ordner).is_err() {
+        return None;
+    }
+    let zeit = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let datei = ordner.join(format!("nachlass-{zeit}.txt"));
+    let gesichert = std::fs::write(&datei, text).is_ok();
+    let mut alte: Vec<_> = std::fs::read_dir(&ordner)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("nachlass-")))
+        .collect();
+    alte.sort();
+    while alte.len() > 20 {
+        let _ = std::fs::remove_file(alte.remove(0));
+    }
+    gesichert.then_some(datei)
+}
+
+/// Fehler beim Schreiben/Lesen, die bedeuten: der Port ist tot (Controller neu angemeldet oder abgezogen)
+pub fn ist_verbindungsfehler(e: &str) -> bool {
+    ["Broken pipe", "Datenübergabe unterbrochen", "Input/output error", "Eingabe-/Ausgabefehler", "No such device", "Kein passendes Gerät"]
+        .iter()
+        .any(|m| e.contains(m))
 }
 
 /// Stelle eines Antwort-Präfixes in einer Zeile. Davor darf Störzeichen-Müll stehen, aber kein Buchstabe, keine
@@ -171,3 +317,29 @@ pub const TASTEN: &[(&str, u8)] = &[
 ];
 pub const SCHIEBER_PC3: u8 = 36;
 pub const SCHIEBER_PA3: u8 = 37;
+
+#[cfg(test)]
+mod tests {
+    use super::nachlass_finden;
+
+    #[test]
+    fn serie_und_anzeige() {
+        let c = "/dev/serial/by-id/usb-dazi_Chitu_2_HD_dazi_edition_1234567890ABCDEF-if01";
+        let l = "/dev/serial/by-id/usb-dazi_C2_Lite_dazi_edition_FEDCBA0987654321-if01";
+        assert_eq!(super::serie(c), "1234567890ABCDEF");
+        assert_eq!(super::anzeige(c), "Chitu 2 HD …CDEF");
+        assert_eq!(super::anzeige(l), "C2 Lite …4321");
+    }
+
+    #[test]
+    fn nachlass_aus_rueckstau() {
+        let t = "lebt 5 s\n--- Nachlass des letzten Laufs (Ende, 12 Zeichen) ---\nChitu-DAC: an\n\n--- Ende Nachlass ---\nlebt 10 s\n";
+        let n = nachlass_finden(t).unwrap();
+        assert!(n.starts_with("--- Nachlass des letzten Laufs"));
+        assert!(n.ends_with("--- Ende Nachlass ---"));
+        assert!(n.contains("Chitu-DAC: an"));
+        // abgeschnitten (Ende fehlt): bis Textende
+        assert!(nachlass_finden("x\n--- Nachlass des letzten Laufs ---\nabc").unwrap().ends_with("abc"));
+        assert!(nachlass_finden("--- Kein Nachlass (Kaltstart) ---").is_none());
+    }
+}

@@ -426,8 +426,8 @@ pub const TEXTE: &[(&str, &str)] = &[
     ("Sicherung des ganzen Speichers lesen", "Read backup of the whole memory"),
     ("Sicherung gespeichert: ~/c2lite-sicherung/{}", "Backup saved: ~/c2lite-sicherung/{}"),
     (
-        "Probelauf erfolgreich: Download-Modus erreicht, Speicher gesichert, Abbild gebaut. Nichts wurde geschrieben; der Controller startet mit der Werks-Firmware neu.",
-        "Dry run successful: download mode reached, memory backed up, image built. Nothing was written; the controller restarts with the factory firmware.",
+        "Probelauf erfolgreich: Download-Modus erreicht, Speicher gesichert, Abbild gebaut. Nichts wurde geschrieben; der Controller startet unverändert neu.",
+        "Dry run successful: download mode reached, memory backed up, image built. Nothing was written; the controller restarts unchanged.",
     ),
     ("C2 Lite Custom schreiben", "Write C2 Lite Custom"),
     ("Prüfen", "Verify"),
@@ -436,6 +436,10 @@ pub const TEXTE: &[(&str, &str)] = &[
         "The written memory differs. Do NOT unplug the controller and start the installation again.",
     ),
     ("C2 Lite Custom ist installiert und geprüft. Der Controller startet neu.", "C2 Lite Custom is installed and verified. The controller restarts."),
+    (
+        "Die alte Bluetooth-Kopplung dieses Rechners wurde entfernt; für Bluetooth am PC den Controller neu koppeln.",
+        "This computer's old Bluetooth pairing was removed; pair the controller again to use Bluetooth on the PC.",
+    ),
     ("Werks-Abbild hat die falsche Größe", "Factory image has the wrong size"),
     ("Controller per USB-Kabel anstecken.", "Connect the controller with the USB cable."),
     ("Kein Controller mit C2 Lite Custom am USB gefunden (Kabel gesteckt? Datenkabel?)", "No controller with C2 Lite Custom found on USB (cable plugged in? data cable?)"),
@@ -580,4 +584,102 @@ pub const TEXTE: &[(&str, &str)] = &[
     (" linker Stick ", " left stick "),
     (" rechter Stick ", " right stick "),
     (" Tasten (grün = schon getestet) ", " Buttons (green = already tested) "),
+    // ---------- musik (Chitu 2 HD) ----------
+    ("Zeile {}: Dauer „{}“ ist keine Zahl (ms)", "line {}: duration “{}” is not a number (ms)"),
+    ("Zeile {}: Dauer {} ms außerhalb 1..60000", "line {}: duration {} ms outside 1..60000"),
+    ("Zeile {}: unbekannte Note „{}“", "line {}: unknown note “{}”"),
+    ("keine Noten gefunden", "no notes found"),
+    (
+        "Note {} hat {} Hz, die Firmware spielt {}..{} Hz (--transponieren oder --lage auto)",
+        "note {} has {} Hz, the firmware plays {}..{} Hz (--transponieren or --lage auto)",
+    ),
+    (
+        "Musik geht nur am Chitu 2 HD (HD-Rumble-Linearmotoren). Dieser Controller meldet sich nicht als Chitu (der C2 Lite hat Unwuchtmotoren ohne Tonausgabe).",
+        "Music only works on the Chitu 2 HD (HD rumble linear motors). This controller does not report itself as a Chitu (the C2 Lite has eccentric motors without tone output).",
+    ),
+    (
+        "musik <datei|noten> [--pegel 1..50] [--transponieren <halbtöne>] [--lage auto] [--abstand 0..60] [--kanal l|r|lr] | musik stop",
+        "musik <file|notes> [--pegel 1..50] [--transponieren <semitones>] [--lage auto] [--abstand 0..60] [--kanal l|r|lr] | musik stop",
+    ),
+    ("Pegel {} außerhalb 1..{} %", "level {} outside 1..{} %"),
+    ("--transponieren höchstens ±36 Halbtöne", "--transponieren at most ±36 semitones"),
+    (
+        "Hinweis: {} s Ton, die Firmware schweigt nach {} s Ton am Stück, bis gleich lange Pause war.",
+        "Note: {} s of tone; the firmware goes quiet after {} s of continuous tone until an equally long pause.",
+    ),
+    ("Spiele {} Noten, {} s, Pegel {} %, transponiert {} Halbtöne", "Playing {} notes, {} s, level {} %, transposed {} semitones"),
+    ("fertig", "done"),
+    // ---------- Seite Musik (Chitu 2 HD) ----------
+    ("Musik", "Music"),
+    (
+        "Melodien über die HD-Rumble-Motoren des Chitu 2 HD. Am lautesten um 250 Hz, Controller auf dem Tisch klingt kräftiger.",
+        "Melodies on the HD rumble motors of the Chitu 2 HD. Loudest around 250 Hz; the controller sounds stronger lying on a table.",
+    ),
+    ("Nur am Chitu 2 HD: dieser Controller meldet sich nicht als Chitu.", "Chitu 2 HD only: this controller does not report itself as a Chitu."),
+    ("Stopp", "Stop"),
+    ("Einstellungen", "Settings"),
+    ("Pegel", "Level"),
+    ("Lage", "Pitch"),
+    ("wie notiert", "as written"),
+    ("um die Resonanz (auto)", "around the resonance (auto)"),
+    ("Verschieben", "Transpose"),
+    ("Halbtöne", "semitones"),
+    ("Motoren", "Motors"),
+    ("beide", "both"),
+    (
+        "Abstand: kurze Lücke nach jedem Ton, damit gleiche Töne hintereinander getrennt klingen. Die Firmware erlaubt höchstens 50 % und schweigt nach 30 s Ton am Stück, bis die Hälfte davon als Pause nachgeholt ist.",
+        "Gap: a short silence after each tone so repeated notes sound separate. The firmware allows at most 50 % and goes quiet after 30 s of continuous tone until half of that has passed as a pause.",
+    ),
+    ("Abstand", "Gap"),
+    ("Abstand höchstens {} ms", "gap at most {} ms"),
+    ("Stücke", "Pieces"),
+    ("Ordner wählen", "Choose folder"),
+    ("Ordner mit Notendateien", "Folder with note files"),
+    ("Neu laden", "Reload"),
+    (
+        "Noch kein Ordner gewählt. Notendateien (*.txt) wie bei „c2lite-custom musik“, z. B. „A3:400 D3:800 P:200“.",
+        "No folder chosen yet. Note files (*.txt) as for “c2lite-custom musik”, e.g. “A3:400 D3:800 P:200”.",
+    ),
+    ("Keine Notendateien (*.txt) in diesem Ordner.", "No note files (*.txt) in this folder."),
+    ("{} s, {} Noten", "{} s, {} notes"),
+    ("Musik: {}", "Music: {}"),
+    // ---------- Verbindung neu (Watchdog-Neustart, Ruhezustand) ----------
+    ("Protokoll des letzten Laufs gesichert: {}", "Log of the previous run saved: {}"),
+    (
+        "Der Controller hat sich am USB neu angemeldet (Neustart oder Ruhezustand des PCs). Automatisch neu verbunden.",
+        "The controller re-appeared on USB (restart or PC sleep). Reconnected automatically.",
+    ),
+    (
+        "Verbindung zum Controller unterbrochen (Neustart, Ruhezustand oder Kabel). Bitte Kabel prüfen und neu verbinden.",
+        "Connection to the controller lost (restart, sleep or cable). Please check the cable and reconnect.",
+    ),
+    // ---------- Gerätetyp-Prüfung vor dem Update ----------
+    (
+        "Das ist kein Update für C2 Lite Custom oder Chitu (keine Kennung im Abbild). Abgebrochen, nichts geschrieben.",
+        "This is not an update for C2 Lite Custom or Chitu (no identifier in the image). Aborted, nothing written.",
+    ),
+    (
+        "Diese Update-Datei ist für das {} (Stand {}), angeschlossen ist ein {}. Abgebrochen, nichts geschrieben.",
+        "This update file is for the {} (version {}), but a {} is connected. Aborted, nothing written.",
+    ),
+    // ---------- mehrere Controller ----------
+    ("Mehrere Controller am USB. Bitte einen mit --port wählen:", "Several controllers on USB. Please choose one with --port:"),
+    ("Controller", "Controller"),
+    // ---------- Installer am Chitu ----------
+    ("Chitu-Firmware schreiben", "Write Chitu firmware"),
+    ("Chitu 2 HD Custom ist installiert und geprüft. Der Controller startet neu.", "Chitu 2 HD Custom is installed and verified. The controller restarts."),
+    ("Platine erkannt: {} (Firmware passt)", "Board detected: {} (firmware matches)"),
+    ("Für das Chitu 2 HD: release/chitu/jl_isd.bin angeben.", "For the Chitu 2 HD: pass release/chitu/jl_isd.bin."),
+    (
+        "Diese Firmware ist für das {}, angeschlossen ist ein {}. Abgebrochen, nichts geschrieben; der Controller startet unverändert neu.{}",
+        "This firmware is for the {}, but a {} is connected. Aborted, nothing written; the controller restarts unchanged.{}",
+    ),
+    (
+        "Die Platine ließ sich aus dem Speicher nicht erkennen (weder Werks- noch eigene Firmware). Abgebrochen, nichts geschrieben.",
+        "The board could not be identified from the memory (neither factory nor custom firmware). Aborted, nothing written.",
+    ),
+    (
+        "Die Firmware-Datei ist kein Abbild von C2 Lite Custom oder Chitu. Abgebrochen, nichts geschrieben.",
+        "The firmware file is not an image of C2 Lite Custom or Chitu. Aborted, nothing written.",
+    ),
 ];

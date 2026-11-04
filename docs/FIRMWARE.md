@@ -147,6 +147,7 @@ c2lite-custom download-modus         in den ROM-Download-Modus (zum Flashen)
 | Bedienung | Wirkung |
 |---|---|
 | Schieber | PC, Aus, Switch (Wechsel startet den Controller neu) |
+| Minus / Plus beim Schieben auf Switch halten | Minus = Switch 1 (klassischer Pro Controller, Logo blinkt 1× türkis), Plus = Switch 2 (Pro Controller 2, 2× türkis); bleibt gespeichert |
 | Licht kurz | nächster Lichtmodus |
 | Licht 3 s halten | Tasten aufnehmen, Abschluss mit Rück 1, Rück 2 oder M |
 | Licht + Taste | Turbo dieser Taste: beim Halten → automatisch → aus |
@@ -185,7 +186,7 @@ Tastenleitung, daher läuft alles im Wechsel in der Abfragerunde (10 ms).
 Ab Stufe 11 ist der C2 Lite mit Schieber auf Switch ein **Pro Controller 2** per Bluetooth LE: koppeln, spielen,
 wecken ohne Joy-Con. Alles dazu, auch das Wissen für eigene Nachbauten: [`PRO-CONTROLLER-2.md`](PRO-CONTROLLER-2.md).
 
-Der frühere Weg (Switch-1-Pro-Controller über klassisches Bluetooth) ist mit `pro2 klassisch` wählbar:
+Der frühere Weg (Switch-1-Pro-Controller über klassisches Bluetooth) ist wählbar: beim Schieben auf Switch Minus halten (Plus = zurück zur Switch 2), oder `pro2 klassisch`:
 
 1. **Registrieren:** Schieber auf Switch, per USB-Kabel an die Switch 2 (obere Buchse, „Kabelgebundene
    Pro-Controller-Kommunikation“ an), in „Griffhaltung/Reihenfolge ändern“ bestätigen. Danach geht es kabellos.

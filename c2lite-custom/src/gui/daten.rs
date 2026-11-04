@@ -32,6 +32,8 @@ pub struct Info {
     pub ble: bool,
     pub akku_mv: u32,
     pub akku_prozent: u8,
+    /// „geraet=…“ (ab Chitu-Firmware), leer beim C2 Lite
+    pub geraet: String,
 }
 
 fn wert<'a>(z: &'a str, k: &str) -> Option<&'a str> {
@@ -61,6 +63,7 @@ impl Info {
             ble: wert(z, "ble") == Some("1"),
             akku_mv: mv,
             akku_prozent: pr,
+            geraet: wert(z, "geraet").unwrap_or("").to_string(),
         })
     }
 }

@@ -6,7 +6,7 @@
 # Das Abbild für den Flash entsteht NICHT durch Umpacken in Mobapads Rahmen (das hat v1 gebrickt).
 set -e
 HIER=$(cd "$(dirname "$0")/.." && pwd)
-SDK=$HIER/sdk-arbeit/jieli-sdk/sdk
+SDK=${SDK:-$HIER/sdk-arbeit/jieli-sdk/sdk}   # Chitu: SDK=.../sdk-arbeit/chitu-sdk/sdk
 TC=$HIER/sdk-arbeit/jltc/tc/jieli-linux-toolchains-20260730.1
 export LD_LIBRARY_PATH=$TC/common/lib:$TC/pi32v2/lib
 make -C "$SDK/apps/hid/board/br23" TOOL_DIR="$TC/pi32v2/bin" -j"$(nproc)" "$@"

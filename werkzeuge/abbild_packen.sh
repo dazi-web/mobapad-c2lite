@@ -5,7 +5,8 @@
 #   ~/mobapad-c2lite/werkzeuge/abbild_packen.sh [name]
 set -e
 S=$(cd "$(dirname "$0")/../sdk-arbeit" && pwd)
-T=$S/jieli-sdk/sdk/cpu/br23/tools
+SDK=${SDK:-$S/jieli-sdk/sdk}   # Chitu: SDK=$S/chitu-sdk/sdk
+T=$SDK/cpu/br23/tools
 TC=$S/jltc/tc/jieli-linux-toolchains-20260730.1
 P=paket/${1:-abbild}-$(date +%m%d-%H%M)
 mkdir -p "$S/$P"
