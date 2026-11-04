@@ -82,9 +82,13 @@ Working (tested on one unit):
 - Rumble from games on both linear motors (left motor 160 Hz, right 320 Hz, as with the factory firmware)
 - Melodies on the motors: `c2lite-custom musik <file>` or the "Musik" page in the program (note format below),
   which also has a piano (mouse or keyboard, recording to a note file)
+- Lights: player LEDs (player 1 when connected, all four blink while charging), the logo as a status light and the
+  5 LEDs in the charging dock: a light trail when docked, a bar with the charge level while charging, the rainbow
+  wave from the factory firmware when full; while music plays, the dock lights up with the notes. The controller
+  sends the dock light through the contacts; the dock needs a power supply (a laptop USB port was not enough in tests).
 - Updates over the USB cable, way back to the factory firmware
 
-Missing so far: Switch / Switch 2, lights (logo, player LEDs), motion sensor, NFC. If the controller restarts
+Missing so far: Switch / Switch 2, motion sensor, NFC. If the controller restarts
 unexpectedly, the program saves the log to `~/.cache/c2lite-custom/` on the next connection.
 
 Install (Linux only, USB cable only):
@@ -100,7 +104,8 @@ cable. When it rumbles in a rhythm, hold Home + Y + X until the rumbling stops. 
 - Update: `c2lite-custom update release/chitu/db_update_data.bin` (or the "Firmware" page)
 - Back to the factory firmware: `c2lite-custom werk-zurueck ~/c2lite-sicherung/werk-sicherung-<time>.bin`
 - Rescue without opening: Home + Y + X for 3 s with a PC on the cable starts the ROM download mode; Home for 10 s
-  restarts. If the firmware fails to start stably several times in a row, it waits instead of restarting in a loop
+  restarts. Plug the cable directly into the computer, not through a USB hub: through a hub the download mode did not
+  enumerate in tests and only came back after a power loss. If the firmware fails to start stably several times in a row, it waits instead of restarting in a loop
   (so far this guard has only been triggered on the C2 Lite with the same firmware).
 - With a C2 Lite and a Chitu plugged in at the same time, the command line asks for `--port`; the program window has a
   selector at the bottom left.
@@ -125,7 +130,7 @@ the Chitu's rescue see above):
 - Everything written is read back and compared; downloaded files are checked by checksum.
 - Updates go to the second flash bank. If an update is interrupted, the old firmware starts.
 - The chip has a loader mode in ROM that no firmware can overwrite. With this firmware: hold Home and Minus for 5 s
-  with the USB cable plugged in.
+  with the USB cable plugged in directly at the computer (through a USB hub the loader mode did not enumerate in tests).
 - If nothing starts any more, only an ESP32-C6 as a rescue sender helps ([`c6-rettung/`](c6-rettung/)); the controller
   has to be opened for that.
 

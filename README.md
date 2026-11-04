@@ -81,9 +81,13 @@ Läuft (an einem Gerät getestet):
 - Vibration aus Spielen auf beide Linearmotoren (linker Motor 160 Hz, rechter 320 Hz, wie die Werks-Firmware)
 - Melodien über die Motoren: `c2lite-custom musik <datei>` oder Seite „Musik“ im Programm (Notenformat unten),
   dort auch ein Klavier (Maus oder Tastatur, mit Aufnahme als Notendatei)
+- Licht: Spieler-LEDs (Spieler 1 bei Verbindung, alle vier blinken beim Laden), Logo als Statusanzeige und die
+  5 LEDs im Ladedock: beim Einsetzen ein Lichtschweif, beim Laden ein Balken mit dem Ladestand, voll die
+  Regenbogen-Welle wie ab Werk; spielt Musik, leuchtet das Dock passend zu den Noten. Das Dock-Licht schickt der
+  Controller über die Kontakte, es braucht ein Netzteil am Dock (ein Laptop-USB-Port reichte im Test nicht).
 - Updates per USB-Kabel, Rückweg zur Werks-Firmware
 
-Fehlt noch: Switch / Switch 2, Licht (Logo, Spieler-LEDs), Bewegungssensor, NFC. Startet der Controller unerwartet
+Fehlt noch: Switch / Switch 2, Bewegungssensor, NFC. Startet der Controller unerwartet
 neu, sichert das Programm beim nächsten Verbinden das Protokoll nach `~/.cache/c2lite-custom/`.
 
 Installieren (nur Linux, nur über das USB-Kabel):
@@ -99,6 +103,8 @@ Wenn es im Takt brummt, Home + Y + X halten, bis das Brummen aufhört. Das Progr
 - Update: `c2lite-custom update release/chitu/db_update_data.bin` (oder Seite „Firmware“)
 - Zurück zur Werks-Firmware: `c2lite-custom werk-zurueck ~/c2lite-sicherung/werk-sicherung-<zeit>.bin`
 - Rettung ohne Öffnen: Home + Y + X 3 s mit PC am Kabel startet den ROM-Download-Modus; Home 10 s startet neu.
+  Das Kabel dafür direkt am Rechner einstecken, nicht über einen USB-Hub: Über einen Hub meldete sich der
+  Download-Modus im Test nicht an und kam erst nach Strom aus wieder heraus.
   Startet die Firmware mehrmals hintereinander nicht stabil, wartet sie, statt in einer Schleife neu zu starten
   (diese Bremse ist bisher nur am C2 Lite mit derselben Firmware ausgelöst worden).
 - Stecken C2 Lite und Chitu gleichzeitig, fragt das Programm auf der Kommandozeile nach `--port`; in der Oberfläche
@@ -124,7 +130,7 @@ Vorkehrungen (C2 Lite; Rettung beim Chitu siehe oben):
 - Alles Geschriebene wird zurückgelesen und verglichen; heruntergeladene Dateien werden per Prüfsumme kontrolliert.
 - Updates landen in der zweiten Speicherbank. Bricht ein Update ab, startet die alte Firmware.
 - Der Chip hat einen Lademodus im ROM, den keine Firmware überschreiben kann. Mit dieser Firmware: Home und Minus 5 s
-  halten, USB-Kabel gesteckt.
+  halten, USB-Kabel gesteckt, direkt am Rechner (über einen USB-Hub meldete sich der Lademodus im Test nicht an).
 - Startet gar nichts mehr, hilft nur ein ESP32-C6 als Rettungssender ([`c6-rettung/`](c6-rettung/)); dafür muss der
   Controller geöffnet werden.
 

@@ -3,7 +3,7 @@
 Kleines Easter Egg: Am Gerät meldet sie sich als „C2 Lite dazi edition“ (USB) bzw. „C2 Lite dazi“ (Bluetooth).
 
 Freie Ersatz-Firmware für den Mobapad C2 Lite (Jieli AC635N/AC695N, Familie BR23), gebaut aus dem offenen
-Jieli-SDK. Stand 2026-10-31: Stufe 13b. Fertige Firmware: `release/`.
+Jieli-SDK. Stand 2026-11-04: Stufe 16p. Fertige Firmware: `release/`.
 
 > **Auf eigenes Risiko.** Nur an eigener Hardware verwenden. Vor dem ersten Schreiben immer den ganzen Flash
 > sichern (siehe unten). Die Werks-Firmware von Mobapad liegt nicht in diesem Repo und wird nicht verteilt.

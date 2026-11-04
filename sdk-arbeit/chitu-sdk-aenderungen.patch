@@ -1383,7 +1383,7 @@ index 0000000..e6d9632
 +#endif
 diff --git a/apps/hid/board/br23/board_c2lite_cfg.h b/apps/hid/board/br23/board_c2lite_cfg.h
 new file mode 100644
-index 0000000..353d034
+index 0000000..98b3dd3
 --- /dev/null
 +++ b/apps/hid/board/br23/board_c2lite_cfg.h
 @@ -0,0 +1,611 @@
@@ -1395,7 +1395,7 @@ index 0000000..353d034
 +#ifdef CONFIG_BOARD_C2LITE
 +/* Chitu 2 HD (komplett/chitu2hd): eigene SDK-Kopie, Stufe C1 = Pin-Monitor mit Sicherheitsnetzen (chitu.c) */
 +#define C2_CHITU 1
-+#define C2_STAND "chitu-CRf"
++#define C2_STAND "chitu-CRi"
 +/* Mobapad C2 Lite (Jieli AC695x). Abgeleitet von board_ac635n_demo_cfg.h; alles, was ohne Pin-Karte
 + * unbekannte Pins treiben würde, ist aus. */
 +
@@ -3327,10 +3327,10 @@ index 0000000..020edd2
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_anzeige.c b/apps/hid/modules/c2lite/c2_anzeige.c
 new file mode 100644
-index 0000000..8467c87
+index 0000000..77ee8aa
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_anzeige.c
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,363 @@
 +/* C2 Lite: Zustandsanzeige über die 4 Spieler-LEDs und das RGB-Logo, dazu die Lichteffekte von Streifen und Seiten.
 + * Wird aus der Tastenabfrage alle C2_ANZEIGE_TAKT_MS aufgerufen.
 + * Vorbild Werks-Firmware (LED-Zustände 0x1557C, Effekte 0x1651A, Farbrad 0x15DCE):
@@ -3385,9 +3385,18 @@ index 0000000..8467c87
 +        }
 +        return m;
 +    }
++#if C2_CHITU
++    /* Chitu: kein Soft-Off (c2_eingaben.c ausschalten), daher am Akku nach 10 min Ruhe LEDs aus (wie AUTO_AUS_MS).
++     * Ladeschlaf: die Ladeanzeige der Spieler-LEDs bleibt (dazu Logo grün atmend und Dock gedimmt, c2_anzeige_rgb). */
++    if (!l->usb_5v && l->ruhe_ms >= 10 * 60 * 1000) {
++        return 0;
++    }
++#else
++    /* Ladeschlaf: Ladezustand nur am Logo (c2_anzeige_rgb) */
 +    if (l->ladeschlaf) {
 +        return 0;
 +    }
++#endif
 +    /* Einschalten: einmal Lauflicht 1 -> 4 (je 150 ms) */
 +    if (ms < 4 * 150) {
 +        return S1 << (ms / 150);
@@ -3431,6 +3440,139 @@ index 0000000..8467c87
 +
 +#define RUHE_DIMMEN_MS (5 * 60 * 1000) /* danach Licht auf 20 % */
 +
++#if C2_CHITU
++/* ---------- Chitu: Licht im Ladedock (CRi) ----------
++ * 5 RGB-LEDs im Dock an PA8 (Kette B), nur im Dock (USB-5V und PA0 low). Werks-FW 0.20: Regenbogen-Welle, 5 %.
++ * Eigene Anzeige, Vorrang von oben:
++ *   Lichtorgel: klingt eine Note (Musik/Klavier), wandert ihre Farbe ins Dock (Tonhöhe → Farbe, je Oktave gleich weit,
++ *               Pegel → Helligkeit) und klingt nach; 1,5 s nach dem letzten Ton zurück zur normalen Anzeige.
++ *   Begrüßung:  beim Einsetzen 0,75 s Lichtschweif über die 5 LEDs, dann füllt sich der Balken.
++ *   Laden:      Balken in 20-%-Stufen, Farbe rot → grün nach Ladestand, das oberste Segment atmet.
++ *   Voll:       Effekt aus den Licht-Einstellungen (Vorgabe Regenbogen-Welle mit dem Werks-Versatz 188 je LED).
++ *   Licht „aus“ schaltet auch das Dock aus. */
++#define DOCK_N 5
++
++/* 80 Hz rot … 1280 Hz violett, je Oktave ein Viertel des Weges (Farbrad 0..1279); Töne gehen bis 1000 Hz (HZ_MAX) */
++static u16 ton_farbe(u16 hz)
++{
++    u32 basis = 80, o = 0;
++    if (hz < 80) {
++        hz = 80;
++    }
++    while (hz >= basis * 2 && o < 3) {
++        basis *= 2;
++        o++;
++    }
++    u32 x = o * 256 + (u32)(hz - basis) * 256 / basis;
++    x = x * 5 / 4;
++    return x > 1279 ? 1279 : x;
++}
++
++static void dock_licht(const struct c2_anzeige_lage *l, const struct c2_licht *e, u32 ms)
++{
++    static u32 dock_seit;                           /* ms beim Einsetzen, 0 = nicht im Dock */
++    static u16 letzte_nr, letzte_hz;
++    static u16 org_farbe[DOCK_N];
++    static u8 org_hell[DOCK_N];                    /* 0..255 */
++    static u32 org_bis;                            /* Lichtorgel sichtbar bis */
++    static u16 hue;
++    static u8 klang_vorher; /* letzte Runde klang etwas: Klavier ohne Tonzähler, dieselbe Taste erneut = neue Note */
++    u8 r, g, b;
++    if (!l->dock || e->modus == C2_LICHT_AUS) {
++        dock_seit = 0, org_bis = 0;
++        for (int i = 0; i < DOCK_N; i++) {
++            setzen_hell(1, i, 0, 0, 0, 0);
++        }
++        return;
++    }
++    if (!dock_seit) {
++        dock_seit = ms ? ms : 1;
++    }
++    u32 drin = ms - dock_seit;
++    hue = (hue + e->tempo / 20 + 1) % 1536;
++
++    /* Lichtorgel */
++    if (l->klang_hz) {
++        u16 d = l->klang_hz > letzte_hz ? l->klang_hz - letzte_hz : letzte_hz - l->klang_hz;
++        if (l->klang_nr != letzte_nr || d > letzte_hz / 32 || !klang_vorher || ms >= org_bis) { /* neue Note: alles rückt eins weiter */
++            for (int i = DOCK_N - 1; i > 0; i--) {
++                org_farbe[i] = org_farbe[i - 1], org_hell[i] = org_hell[i - 1];
++            }
++            org_farbe[0] = ton_farbe(l->klang_hz);
++        }
++        org_hell[0] = 100 + (u16)(l->klang_pegel > 50 ? 50 : l->klang_pegel) * 155 / 50;
++        letzte_nr = l->klang_nr, letzte_hz = l->klang_hz;
++        org_bis = ms + 1500;
++    }
++    klang_vorher = l->klang_hz != 0;
++    if (ms < org_bis) {
++        u8 hell = e->hell * 2 > 60 ? 60 : e->hell * 2 < 10 ? 10 : e->hell * 2; /* Lichtorgel heller als der Balken */
++        for (int i = 0; i < DOCK_N; i++) {
++            if (i > 0 || !l->klang_hz) {
++                org_hell[i] = (u16)org_hell[i] * 95 / 100; /* klingt in ~0,5 s aus */
++            }
++            farbrad(org_farbe[i], &r, &g, &b);
++            setzen_hell(1, i, (u16)r * org_hell[i] / 255, (u16)g * org_hell[i] / 255, (u16)b * org_hell[i] / 255, hell);
++        }
++        return;
++    }
++    letzte_hz = 0;
++
++    /* Begrüßung: Lichtschweif 0 → 4 */
++    if (drin < 750) {
++        int kopf = drin / 150;
++        for (int i = 0; i < DOCK_N; i++) {
++            int abstand = kopf - i;
++            u8 h = abstand < 0 ? 0 : abstand >= 3 ? 0 : 255 - abstand * 100;
++            farbrad(i * 300, &r, &g, &b);
++            setzen_hell(1, i, (u16)r * h / 255, (u16)g * h / 255, (u16)b * h / 255, e->hell);
++        }
++        return;
++    }
++
++    if (l->laedt) {
++        /* Ladebalken; nach der Begrüßung füllt er sich Segment für Segment */
++        u8 p = l->dock_prozent;
++        int n = p ? (p + 19) / 20 : 1;
++        n = n < 1 ? 1 : n > DOCK_N ? DOCK_N : n;
++        if (drin < 750 + (u32)n * 150) {
++            n = (drin - 750) / 150 + 1;
++        }
++        farbrad((u16)p * 512 / 100, &r, &g, &b); /* 0 % rot, 50 % gelb, 100 % grün */
++        u32 phase = ms % 2000;
++        u8 atmen = 15 + (phase < 1000 ? phase : 2000 - phase) * 85 / 1000;
++        for (int i = 0; i < DOCK_N; i++) {
++            u8 h = i < n - 1 ? 100 : i == n - 1 ? atmen : 0;
++            setzen_hell(1, i, skalieren(r, h), skalieren(g, h), skalieren(b, h), e->hell);
++        }
++        return;
++    }
++
++    /* voll (oder nicht ladend): Effekt aus den Licht-Einstellungen */
++    for (int i = 0; i < DOCK_N; i++) {
++        switch (e->modus) {
++        case C2_LICHT_STATISCH:
++            r = e->farbe[0], g = e->farbe[1], b = e->farbe[2];
++            break;
++        case C2_LICHT_ATMEN: {
++            u32 periode = 4000 - 30 * (u32)(e->tempo > 100 ? 100 : e->tempo);
++            u32 phase = ms % periode;
++            u8 stufe = phase < periode / 2 ? phase * 200 / periode : 200 - phase * 200 / periode;
++            r = skalieren(e->farbe[0], stufe), g = skalieren(e->farbe[1], stufe), b = skalieren(e->farbe[2], stufe);
++            break;
++        }
++        case C2_LICHT_FARBWECHSEL:
++            farbrad(hue, &r, &g, &b);
++            break;
++        default: /* Regenbogen (Vorgabe) und Reaktiv: Welle wie die Werks-FW */
++            farbrad((hue + (DOCK_N - 1 - i) * 188) % 1536, &r, &g, &b);
++            break;
++        }
++        setzen_hell(1, i, r, g, b, e->hell);
++    }
++}
++#endif
++
 +void c2_anzeige_rgb(const struct c2_anzeige_lage *l, const struct c2_licht *e_einst)
 +{
 +    u32 ms = takt * C2_ANZEIGE_TAKT_MS;
@@ -3445,6 +3587,13 @@ index 0000000..8467c87
 +        }
 +        setzen_hell(1, 0, 0, 0, 0, 0);
 +        setzen_hell(1, 1, 0, 0, 0, 0);
++#if C2_CHITU
++        {
++            struct c2_licht d = e;
++            d.hell = d.hell / 5; /* Ladeschlaf: Dock gedimmt weiter, wie nach 5 min Ruhe (hell 0 bleibt aus) */
++            dock_licht(l, &d, ms);
++        }
++#endif
 +        return;
 +    }
 +    if (l->ruhe_ms > RUHE_DIMMEN_MS) {
@@ -3478,6 +3627,10 @@ index 0000000..8467c87
 +        r = 0, g = 0, b = 255, an = blinken(250);                  /* Bluetooth sucht: blau blinkend */
 +    }
 +    setzen_hell(0, 0, an ? r : 0, an ? g : 0, an ? b : 0, e.logo_hell);
++#if C2_CHITU
++    dock_licht(l, &e, ms); /* Chitu: kein Streifen, keine Seiten; Kette B = Dock */
++    return;
++#endif
 +
 +    /* Streifen (Kette A, LED 1..7) und Seiten (Kette B, beide gleich) = 8 Plätze, Platz 0 = Seiten */
 +    static u16 hue;
@@ -3543,10 +3696,10 @@ index 0000000..8467c87
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_anzeige.h b/apps/hid/modules/c2lite/c2_anzeige.h
 new file mode 100644
-index 0000000..32731f8
+index 0000000..90ec61c
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_anzeige.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,45 @@
 +#ifndef C2_ANZEIGE_H
 +#define C2_ANZEIGE_H
 +/* C2 Lite: Zustandsanzeige über die Spieler-LEDs (c2_anzeige.c) */
@@ -3566,7 +3719,13 @@ index 0000000..32731f8
 +    u8 druck_gruppe;      /* neu gedrückt in dieser Runde: 0 keine, 1 Aktionstasten, 2 Schultertasten, 3 Steuerkreuz, 4 sonst */
 +    u8 logo_an;           /* Belegung (Aufnahme, Bedienschritt): Logo in dieser Farbe statt Status */
 +    u8 logo[3];
-+    u8 ladeschlaf;        /* lange Ruhe am Ladegerät: nur das Logo zeigt gedimmt den Ladezustand */
++    u8 ladeschlaf;        /* lange Ruhe am Ladegerät: C2 Lite nur Logo gedimmt, Chitu Spieler-LEDs, Logo und Dock gedimmt */
++    /* Chitu (CRi): Dock-Licht */
++    u8 dock;              /* im Ladedock: USB-5V und PA0 low (Werks-FW 0x1b1d0) */
++    u8 dock_prozent;      /* Ladestand für den Balken (beim Laden um die Ladespannung bereinigt) */
++    u16 klang_hz;         /* gerade klingende Note (Musik/Klavier), 0 = still */
++    u8 klang_pegel;       /* 0..50 % */
++    u16 klang_nr;         /* ändert sich mit jedem neuen Musikton */
 +};
 +
 +/* Liefert die LED-Maske für diese Runde */
@@ -4451,14 +4610,14 @@ index 0000000..dda57e2
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_eingaben.c b/apps/hid/modules/c2lite/c2_eingaben.c
 new file mode 100644
-index 0000000..9e3a063
+index 0000000..477ff07
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_eingaben.c
-@@ -0,0 +1,1080 @@
+@@ -0,0 +1,1116 @@
 +/* C2 Lite: Eingaben lesen, als HID-Gamepad über USB senden und über das USB-Protokoll (c2_log) melden.
-+ * Keine LED, kein Motor, kein Laden (kommt in späteren Stufen).
++ * Dazu Spieler-LEDs (c2_anzeige.c), Motoren bzw. Chitu-DAC, Akku- und Ladeerkennung.
 + * Pin-Karte und Abfrage-Ablauf aus der Werks-Firmware, am Gerät bestätigt:
-+ *   PA7 = gemeinsame LED-Leitung (hier dauerhaft low = LEDs aus), PA8 = gemeinsame Tastenleitung.
++ *   PA7 = gemeinsame LED-Leitung (low beim Lesen, high während der LED-Phase), PA8 = gemeinsame Tastenleitung.
 + *   Phase A: PA8 high, Pins mit Pull-down lesen, gedrückt = high.
 + *   Phase B: PA8 low, Pins mit Pull-up lesen, gedrückt = low.
 + *   ZL PA10, ZR PB3: Pull-up, gedrückt = low.  Sticks: ADC PA5/PA6 (links), PB10/PB8 (rechts).  Akku: ADC PB4.
@@ -4675,7 +4834,7 @@ index 0000000..9e3a063
 +    os_time_dly(5); /* Protokollzeile noch rausschicken */
 +#if C2_CHITU
 +    extern void chitu_download_springen(void);
-+    chitu_download_springen(); /* Zähler 0, Watchdog aus; kein RGB (PA7/PA8), keine Motoren */
++    chitu_download_springen(); /* Zähler 0, Watchdog aus; ab CRi Logo/Dock rot (rom_springen), keine Motoren */
 +    return;
 +#endif
 +    rgb_manuell = 1;
@@ -4923,15 +5082,20 @@ index 0000000..9e3a063
 +/* Lädt der Akku gerade? Nur am USB: PB4 deutlich unter VBAT/2 */
 +u8 c2_akku_laedt(void)
 +{
++#if C2_CHITU
++    /* Chitu (CRh, gemessen 4.11.): VBAT liest am USB-Kabel ~4,86 V, der Vergleich mit VBAT/2 meldete dort auch bei vollem
++     * Akku „lädt“. PB4 beim Laden 1383..1551 mV (Dock), voll 2155..2157 mV (Kabel) -> feste Schwelle dazwischen. */
++    return gpio_read(IO_PORTB_05) && pb4_mv && pb4_mv < 1800;
++#else
 +    return gpio_read(IO_PORTB_05) && akku_mv && pb4_mv * 2 + 400 < akku_mv;
++#endif
 +}
 +
 +/* LiPo-Kennlinie grob (Ruhespannung): 3,40 V = 0 %, 4,15 V = 100 % */
-+u8 c2_akku_prozent(void)
++static u8 prozent_von(u16 v)
 +{
 +    static const u16 MV[] = {3400, 3600, 3700, 3750, 3800, 3850, 3900, 3950, 4000, 4050, 4100, 4150};
 +    static const u8 PROZENT[] = {0, 8, 15, 25, 35, 45, 55, 65, 75, 85, 95, 100};
-+    u16 v = akku_mv;
 +    if (!v) {
 +        return 0;
 +    }
@@ -4944,6 +5108,11 @@ index 0000000..9e3a063
 +        }
 +    }
 +    return 100;
++}
++
++u8 c2_akku_prozent(void)
++{
++    return prozent_von(akku_mv);
 +}
 +
 +/* Fehlersuche Akkumessung: Einstellungen von PB4 (und PB11, Versorgung) und Rohwerte */
@@ -5027,7 +5196,12 @@ index 0000000..9e3a063
 +    if (!led_maske) {
 +        return; /* PA7 bleibt low, Pins bleiben Eingänge */
 +    }
++    /* wie die Werks-FW (C2 0x15CD2, Chitu 0x1a3dc): je Pin High-Drive an, Pull-up/-down aus, dann Ausgang;
++     * vorher blieb der Pull-up aus Phase B an (LEDs am Chitu sichtbar dunkler). Phase A/B setzen die Pulls neu. */
 +    for (int i = 0; i < 7; i++) {
++        gpio_set_hd(LED_PIN[i], 1);
++        gpio_set_pull_up(LED_PIN[i], 0);
++        gpio_set_pull_down(LED_PIN[i], 0);
 +        gpio_direction_output(LED_PIN[i], !(led_maske & BIT(i)));
 +    }
 +    gpio_direction_output(IO_PORTA_07, 1);
@@ -5232,9 +5406,7 @@ index 0000000..9e3a063
 +    gpio_direction_output(IO_PORTA_08, 0);
 +    r |= phase_lesen(PHASE_B, ARRAY_SIZE(PHASE_B), 0);
 +    r |= phase_lesen(DIREKT, ARRAY_SIZE(DIREKT), 0);
-+#if !C2_CHITU
-+    c2_rgb_senden(); /* PA7 und PA8 sind hier low (siehe c2_rgb.c) */
-+#endif
++    c2_rgb_senden(); /* PA7 und PA8 sind hier low (siehe c2_rgb.c); Chitu ab CRi: Logo (PA7) + Dock (PA8) */
 +    MESS(0);
 +    if (runde == 500 / TAKT_MS) {
 +        /* Switch-Weg beim Start gewählt (c2_pro2_an): Logo blinkt türkis, 1× = Switch 1, 2× = Switch 2 */
@@ -5280,6 +5452,30 @@ index 0000000..9e3a063
 +            .spieler = c2_pro2_verbunden() ? c2_pro2_spieler() : c2_switch_modus() ? c2_switch_spieler() : 0,
 +            .ladeschlaf = ladeschlaf,
 +        };
++#if C2_CHITU
++        {
++            extern void chitu_klang(u16 *hz, u8 *pegel, u16 *nr);
++            /* entprellt (Prüfung CRi S1): ein Wechsel gilt erst nach 10 gleichen Runden (100 ms) */
++            static u8 dock_stabil, dock_neu_n;
++            static s8 dock_gemeldet = -1;
++            u8 roh = lage.usb_5v && !gpio_read(IO_PORTA_00);
++            if (roh == dock_stabil) {
++                dock_neu_n = 0;
++            } else if (++dock_neu_n >= 10) {
++                dock_stabil = roh, dock_neu_n = 0;
++            }
++            lage.dock = dock_stabil;
++            if (lage.dock != dock_gemeldet) {
++                c2_log("Dock: %s (PA0=%d, USB-5V=%d)\r\n", lage.dock ? "drin" : "raus", gpio_read(IO_PORTA_00),
++                       lage.usb_5v);
++                dock_gemeldet = lage.dock;
++            }
++            /* Beim Laden liegt die Akkuspannung ~0,1 V über der Ruhespannung (Dock 4.11.: 4040 mV in Ruhe, 4111..4188 mV
++             * beim Laden); für den Balken abziehen, damit er nicht vorauseilt */
++            lage.dock_prozent = lage.laedt && akku_mv > 120 ? prozent_von(akku_mv - 120) : lage.akku_prozent;
++            chitu_klang(&lage.klang_hz, &lage.klang_pegel, &lage.klang_nr);
++        }
++#endif
 +        lage.logo_an = c2_belegung_logo(lage.logo);
 +        u8 auto_maske = c2_anzeige_berechnen(&lage) | c2_belegung_led();
 +        led_maske = led_manuell != C2_LED_AUTO ? led_manuell : einst.anzeige ? auto_maske : 0;
@@ -5287,9 +5483,7 @@ index 0000000..9e3a063
 +            c2_anzeige_rgb(&lage, &einst.licht);
 +        }
 +    }
-+#if !C2_CHITU
-+    leds_ausgeben(); /* Chitu: Spieler-LEDs erst nach Prüfung der Werks-FW (eigene Stufe) */
-+#endif
++    leds_ausgeben(); /* Chitu (CRg): gleiche Pins und gleiches Muster wie die Werks-FW 0.20 (0x1a3dc..0x1a44e) */
 +    motor_takt();
 +    verbunden_melden(usb_host_runde && runde - usb_host_runde < 200 / TAKT_MS,
 +                     !c2_switch_modus() && ble_hid_is_connected() && c2_ble_report_abonniert(),
@@ -5496,8 +5690,9 @@ index 0000000..9e3a063
 +    /* LEDs aus: gemeinsame Leitung low; High-Drive wie die Werks-Firmware */
 +    gpio_set_hd(IO_PORTA_07, 1);
 +    gpio_direction_output(IO_PORTA_07, 0);
-+#if !C2_CHITU
 +    c2_rgb_init(); /* Pulslängen der RGB-LEDs messen (PA7/PA8 low) */
++#if C2_CHITU
++    eingang(IO_PORTA_00, 0, 0); /* Dock-Kontakt: digitaler Eingang ohne Pull wie die Werks-FW (0x93e2), low = im Dock */
 +#endif
 +    gpio_set_hd(IO_PORTA_08, 1); /* wie die Werks-Firmware: Tastenleitung mit High-Drive */
 +    gpio_direction_output(IO_PORTA_08, 0);
@@ -5537,10 +5732,10 @@ index 0000000..9e3a063
 +}
 diff --git a/apps/hid/modules/c2lite/c2_log.c b/apps/hid/modules/c2lite/c2_log.c
 new file mode 100644
-index 0000000..b907956
+index 0000000..4b13272
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_log.c
-@@ -0,0 +1,850 @@
+@@ -0,0 +1,853 @@
 +#include "app_config.h"
 +#include "system/includes.h"
 +#include "c2_log.h"
@@ -6318,7 +6513,10 @@ index 0000000..b907956
 + * 0 zurück, dann bleibt alles im Puffer. */
 +static void senden(void *priv)
 +{
-+    u8 stueck[64];
++    /* Höchstens 63 Byte je Stück (16p/CRh): ein volles 64-Byte-Paket beendet keine Bulk-Übertragung, Linux (cdc_acm)
++     * reicht es erst mit dem nächsten Paket weiter. Am Chitu 4.11. belegt: „lebt …“ (48 B) + „ok: ota …“ (16 B) = 64 B,
++     * die Antwort kam 5 s später mit der nächsten Zeile, das Update brach ab. Jedes Stück ist so ein Kurzpaket. */
++    u8 stueck[MAXP_SIZE_CDC_BULKIN - 1];
 +    SPUR_APP(0x40);
 +    befehle_lesen();
 +    SPUR_APP(0x41);
@@ -7573,10 +7771,10 @@ index 0000000..513d199
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_rgb.c b/apps/hid/modules/c2lite/c2_rgb.c
 new file mode 100644
-index 0000000..ff1f7fc
+index 0000000..eb92974
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_rgb.c
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,208 @@
 +/* C2 Lite: adressierbare RGB-LEDs (WS2812-Art), wie die Werks-Firmware per Bit-Bang mit gesperrten Interrupts:
 + *   Kette A an PA7 (= Sammelleitung der Spieler-LEDs): LED 0 = Logo oben, LED 1..7 = Streifen unten, alle R,G,B
 + *   Kette B an PA8 (= Tastenleitung): 2 LEDs an den Seiten, G,R,B   (Zuordnung und Reihenfolge am Gerät geprüft)
@@ -7590,13 +7788,22 @@ index 0000000..ff1f7fc
 +
 +#ifdef CONFIG_BOARD_C2LITE
 +
++#if C2_CHITU
++/* Chitu 2 HD (CRi, Werks-FW 0.20 0x1b9a4..0x1ba74): PA7 = 1 LED (Logo), PA8 = 5 LEDs (Ladedock, nur gesendet bei
++ * USB-5V und PA0 low). Die Werks-FW sendet beide Ketten als Puffer[1],[0],[2] = G,R,B. */
++#define KETTE_A 1
++#define KETTE_B 5
++#define KETTE_A_GRB 1
++#else
 +#define KETTE_A 8
 +#define KETTE_B 2
++#define KETTE_A_GRB 0
++#endif
 +static u8 rohe_a[KETTE_A * 3], rohe_b[KETTE_B * 3]; /* Bytes in Senderreihenfolge */
 +static u32 n_kurz = 1, n_lang = 4, n_pause = 4;     /* Schleifenzähler, nach Kalibrierung */
 +static u32 n_ruhe = 20000;                          /* Reset vor dem Frame: Leitung > 300 µs low */
 +static u32 ns_je_durchlauf, ns_aufruf;              /* Messwerte der Kalibrierung */
-+static u8 rgb_an;                                    /* erst nach „rgb …“-Befehl senden */
++static u8 rgb_an;                                    /* erst senden, wenn eine Farbe gesetzt wurde (Anzeige oder „rgb …“) */
 +static u8 rgb_kaputt;                                /* Kalibrierung unplausibel: nie senden */
 +
 +u32 timer_get_ms(void);
@@ -7716,7 +7923,7 @@ index 0000000..ff1f7fc
 +    int grb;
 +    if (kette == 0 && led >= 0 && led < KETTE_A) {
 +        p = rohe_a + led * 3;
-+        grb = 0; /* am Gerät geprüft: Logo (LED 0) und Streifen (1..7) erwarten R,G,B */
++        grb = KETTE_A_GRB; /* C2 am Gerät geprüft: Logo (LED 0) und Streifen (1..7) erwarten R,G,B; Chitu G,R,B (Werk) */
 +    } else if (kette == 1 && led >= 0 && led < KETTE_B) {
 +        p = rohe_b + led * 3;
 +        grb = 1;
@@ -7729,6 +7936,22 @@ index 0000000..ff1f7fc
 +    } else {
 +        p[0] = r, p[1] = g, p[2] = b;
 +    }
++}
++
++void c2_rgb_alle(u8 r, u8 g, u8 b);
++void c2_rgb_senden(void);
++
++/* Vor dem Sprung in den ROM-Modus (chitu.c rom_springen, CRi): alle LEDs rot, damit man den ROM-Modus sieht (die LEDs
++ * halten ihren letzten Frame). Nur wenn das Licht schon lief, also nicht in N3/N4 vor der Initialisierung. */
++void c2_rgb_rot_vor_rom(void)
++{
++    if (!rgb_an || rgb_kaputt) {
++        return;
++    }
++    c2_rgb_alle(160, 0, 0);
++    gpio_direction_output(IO_PORTA_07, 0);
++    gpio_direction_output(IO_PORTA_08, 0);
++    c2_rgb_senden();
 +}
 +
 +void c2_rgb_alle(u8 r, u8 g, u8 b)
@@ -10314,10 +10537,10 @@ index 0000000..89390c6
 +#endif
 diff --git a/apps/hid/modules/c2lite/chitu.c b/apps/hid/modules/c2lite/chitu.c
 new file mode 100644
-index 0000000..1c88496
+index 0000000..e00f92f
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/chitu.c
-@@ -0,0 +1,830 @@
+@@ -0,0 +1,834 @@
 +/* Chitu 2 HD, Stufe C1: Sicherheitsnetze N3/N4 und Pin-Monitor (nur lesen und melden).
 + *
 + * Quellen (eigene Analyse der Werks-Firmware 0.20, Notizen nicht im Repo): Werks-FW 0.20 hat dieselbe Tastenmatrix wie der C2 Lite (Pin-Tabellen
@@ -10336,7 +10559,8 @@ index 0000000..1c88496
 + *   Home allein 10 s -> Neustart (ohne PC; zählt für N4).
 + *   Kein Soft-Off (Wecken am Chitu unbelegt): Unterspannungs-Aus und Bluetooth-Aus sind im Chitu-Bau abgeschaltet.
 + * Keine Ausgänge außer denen, die die Werks-FW genauso setzt (PA7/PA8 low bzw. PA8 high in der Matrix, PB11 high,
-+ * PA6/PB8 für den Stick-Rahmen). Keine Motoren, kein RGB, kein Auto-Aus. */
++ * PA6/PB8 für den Stick-Rahmen; ab CRg Spieler-LEDs PC0..PC5/PA12 + PA7 high wie Werks-FW 0x1a3dc; ab CRi
++ * RGB: Logo an PA7, Dock an PA8 wie Werks-FW 0x1b9a4). Kein Auto-Aus. */
 +#include "app_config.h"
 +#include "system/includes.h"
 +#include "asm/gpio.h"
@@ -10439,6 +10663,9 @@ index 0000000..1c88496
 + * Wartemodus landet. Watchdog aus wie c2_download_springen (überlebt sonst den Sprung und beendet den ROM-Modus). */
 +static void rom_springen(void)
 +{
++    extern void c2_rgb_rot_vor_rom(void);
++    c2_rgb_rot_vor_rom();                  /* Logo und Dock rot (CRi), nur wenn das Licht schon lief */
++    gpio_direction_output(IO_PORTA_07, 0); /* LEDs aus (CRh): im ROM läuft keine Firmware, die sie umschaltet */
 +    netz_setzen(0);
 +    wdt_close();
 +    go_mask_usb_updata();
@@ -11150,10 +11377,10 @@ index 0000000..1c88496
 +#endif
 diff --git a/apps/hid/modules/c2lite/chitu_dac.c b/apps/hid/modules/c2lite/chitu_dac.c
 new file mode 100644
-index 0000000..0c2bb12
+index 0000000..cf46af8
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/chitu_dac.c
-@@ -0,0 +1,671 @@
+@@ -0,0 +1,689 @@
 +/* Chitu 2 HD, Stufe C-R: Linearmotoren (HD-Rumble) über den Audio-DAC – Töne und Melodien.
 + *
 + * Quellen (eigene Analyse der Werks-Firmware 0.20, Notizen nicht im Repo):
@@ -11235,6 +11462,7 @@ index 0000000..0c2bb12
 +static s32 akt_amp;           /* 0..32767*PEGEL_DECKEL/100 */
 +static u8 akt_laeuft;
 +static volatile u32 unterlauf, last, last_sperren;
++static volatile u16 ton_nr; /* zählt geladene Musiktöne (Lichtorgel, CRi) */
 +
 +/* Lib-Tabelle (audio_dac_vdd_power_on): Chip-Version <3 oder ≥12 → verA {0..7}, sonst verD {1,2,3,4,5,6,6,7}.
 + * Werks-Code 3 → verA ldo_volt 3, verD ldo_volt 2. Gleiches Register wie die Lib (0x1E0200 & 0xF). */
@@ -11269,6 +11497,9 @@ index 0000000..0c2bb12
 +    schritt = akt.hz ? (u32)(((u64)akt.hz << 32) / RATE) : 0;
 +    akt_amp = akt.hz ? (s32)32767 * akt.pegel / 100 : 0; /* einmal je Ton (Prüfung S4) */
 +    akt_laeuft = 1;
++    if (akt.hz) {
++        ton_nr++;
++    }
 +}
 +
 +/* Lastkonto: je klingendem Abtastwert +1, je stillem −1; nach LAST_MAX_S s Ton am Stück still, bis es zur Hälfte
@@ -11815,6 +12046,20 @@ index 0000000..0c2bb12
 +    }
 +}
 +
++/* Lichtorgel (CRi, c2_anzeige.c): was klingt gerade? hz 0 = nichts. nr ändert sich mit jedem neuen Musikton.
++ * Aus der 10-ms-Runde; die Werte schreibt der Füll-Zeitgeber, sie dürfen eine Runde alt sein. Rumble zählt nicht. */
++void chitu_klang(u16 *hz, u8 *pegel, u16 *nr)
++{
++    *nr = ton_nr;
++    if (akt_laeuft && akt.hz && !pausiert) {
++        *hz = akt.hz, *pegel = akt.pegel;
++    } else if (live_rest && live_ist && !pausiert) {
++        *hz = (u16)(((u64)live_schritt * RATE) >> 32), *pegel = live_ist >> 8;
++    } else {
++        *hz = 0, *pegel = 0;
++    }
++}
++
 +/* Aus chitu_sticks_pausieren: während eines Updates still und ohne Zeitgeber (kein audio_dac_stop, Prüfung S1) */
 +void chitu_dac_pausieren(int an)
 +{
@@ -11848,6 +12093,23 @@ index 0000000..bcc9c25
 +    -30273, -29956, -29621, -29268, -28898, -28510, -28105, -27683, -27245, -26790, -26319, -25832, -25329, -24811, -24279, -23731,
 +    -23170, -22594, -22005, -21403, -20787, -20159, -19519, -18868, -18204, -17530, -16846, -16151, -15446, -14732, -14010, -13279,
 +    -12539, -11793, -11039, -10278, -9512, -8739, -7962, -7179, -6393, -5602, -4808, -4011, -3212, -2410, -1608, -804,
+diff --git a/apps/hid/modules/power/app_power_manage.c b/apps/hid/modules/power/app_power_manage.c
+index d4ebfbc..588a8f8 100644
+--- a/apps/hid/modules/power/app_power_manage.c
++++ b/apps/hid/modules/power/app_power_manage.c
+@@ -327,6 +327,12 @@ bool vbat_is_low_power(void)
+ 
+ void check_power_on_voltage(void)
+ {
++#if C2_CHITU
++#if(TCFG_SYS_LVD_EN == 1)
++    vbat_check_init(); /* S3: kein Soft-Off beim Start (Wecken am Chitu unbelegt) */
++#endif
++    return;
++#endif
+ #if(TCFG_SYS_LVD_EN == 1)
+ 
+     u16 val = 0;
 diff --git a/apps/hid/modules/user_cfg.c b/apps/hid/modules/user_cfg.c
 index 5e905be..d688b74 100644
 --- a/apps/hid/modules/user_cfg.c

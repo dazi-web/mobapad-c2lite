@@ -85,7 +85,7 @@ index 7bd1c91..0f78078 100644
  #ifndef CONFIG_DEBUG_LITE_ENABLE
  void log_putbyte(char c)
 diff --git a/apps/common/device/usb/device/cdc.c b/apps/common/device/usb/device/cdc.c
-index f61c39c..3e09bc7 100644
+index f61c39c..6700883 100644
 --- a/apps/common/device/usb/device/cdc.c
 +++ b/apps/common/device/usb/device/cdc.c
 @@ -172,7 +172,22 @@ static u32 cdc_setup(struct usb_device_t *usb_device, struct usb_ctrlrequest *ct
@@ -125,6 +125,23 @@ index f61c39c..3e09bc7 100644
              break;
          default:
              log_error("unsupported class req");
+@@ -377,6 +398,16 @@ u32 cdc_write_data(const usb_dev usb_id, u8 *buf, u32 len)
+     while (offset < len) {
+         txlen = len - offset > MAXP_SIZE_CDC_BULKIN ?
+                 MAXP_SIZE_CDC_BULKIN : len - offset;
++#ifdef CONFIG_BOARD_C2LITE
++        /* Liegt das vorige Stück noch im Endpunkt, weil der PC nicht abholt (Port offen, aber niemand liest)? Dann
++         * nicht senden: usb_g_bulk_write wartet sonst aktiv, und bei vollem Puffer am PC startete der Watchdog neu
++         * (Chitu 4.11.: Spur app=0x42 = in cdc_write_data; am C2 Lite 16o nachgestellt: 10 Befehle/s ohne Ablesen ->
++         * Reset 0x04 nach 10,4 s). Gleiche Prüfung wie hid.c (13b); der Rest bleibt im Protokoll-Ring. */
++        extern int c2_ep_tx_belegt(u32 ep);
++        if (c2_ep_tx_belegt(CDC_DATA_EP_IN)) {
++            break;
++        }
++#endif
+         txlen = usb_g_bulk_write(usb_id, CDC_DATA_EP_IN, buf + offset, txlen);
+         if (txlen == 0) {
+             break;
 diff --git a/apps/common/device/usb/device/custom_hid.c b/apps/common/device/usb/device/custom_hid.c
 index 5cf3471..730ea99 100644
 --- a/apps/common/device/usb/device/custom_hid.c
@@ -4405,10 +4422,10 @@ index 0000000..dda57e2
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_eingaben.c b/apps/hid/modules/c2lite/c2_eingaben.c
 new file mode 100644
-index 0000000..40e9b7a
+index 0000000..01f1182
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_eingaben.c
-@@ -0,0 +1,983 @@
+@@ -0,0 +1,988 @@
 +/* C2 Lite: Eingaben lesen, als HID-Gamepad über USB senden und über das USB-Protokoll (c2_log) melden.
 + * Keine LED, kein Motor, kein Laden (kommt in späteren Stufen).
 + * Pin-Karte und Abfrage-Ablauf aus der Werks-Firmware, am Gerät bestätigt:
@@ -4962,7 +4979,12 @@ index 0000000..40e9b7a
 +    if (!led_maske) {
 +        return; /* PA7 bleibt low, Pins bleiben Eingänge */
 +    }
++    /* wie die Werks-FW (C2 0x15CD2, Chitu 0x1a3dc): je Pin High-Drive an, Pull-up/-down aus, dann Ausgang;
++     * vorher blieb der Pull-up aus Phase B an (LEDs am Chitu sichtbar dunkler). Phase A/B setzen die Pulls neu. */
 +    for (int i = 0; i < 7; i++) {
++        gpio_set_hd(LED_PIN[i], 1);
++        gpio_set_pull_up(LED_PIN[i], 0);
++        gpio_set_pull_down(LED_PIN[i], 0);
 +        gpio_direction_output(LED_PIN[i], !(led_maske & BIT(i)));
 +    }
 +    gpio_direction_output(IO_PORTA_07, 1);
@@ -5394,15 +5416,15 @@ index 0000000..40e9b7a
 +}
 diff --git a/apps/hid/modules/c2lite/c2_log.c b/apps/hid/modules/c2lite/c2_log.c
 new file mode 100644
-index 0000000..fa0b325
+index 0000000..d383f75
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_log.c
-@@ -0,0 +1,732 @@
+@@ -0,0 +1,735 @@
 +#include "app_config.h"
 +#include "system/includes.h"
 +#include "c2_log.h"
 +#ifndef C2_STAND
-+#define C2_STAND "16o"
++#define C2_STAND "16p"
 +#endif
 +#include "asm/gpio.h"
 +
@@ -6062,7 +6084,10 @@ index 0000000..fa0b325
 + * 0 zurück, dann bleibt alles im Puffer. */
 +static void senden(void *priv)
 +{
-+    u8 stueck[64];
++    /* Höchstens 63 Byte je Stück (16p/CRh): ein volles 64-Byte-Paket beendet keine Bulk-Übertragung, Linux (cdc_acm)
++     * reicht es erst mit dem nächsten Paket weiter. Am Chitu 4.11. belegt: „lebt …“ (48 B) + „ok: ota …“ (16 B) = 64 B,
++     * die Antwort kam 5 s später mit der nächsten Zeile, das Update brach ab. Jedes Stück ist so ein Kurzpaket. */
++    u8 stueck[MAXP_SIZE_CDC_BULKIN - 1];
 +    befehle_lesen();
 +    while (lies != schreib) {
 +        u32 n = 0, l = lies;

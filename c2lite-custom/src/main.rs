@@ -635,8 +635,8 @@ fn update_passt(g: &mut dyn Kanal, daten: &[u8]) -> Result<(), String> {
     let Some((stand, abbild_chitu)) = update_kennung(daten) else {
         return Err(t("Das ist kein Update für C2 Lite Custom oder Chitu (keine Kennung im Abbild). Abgebrochen, nichts geschrieben.").into());
     };
-    // bis 6 s: bei älteren Chitu-Ständen war die info-Zeile zu lang und endete erst mit der nächsten Protokollzeile
-    let info = g.befehl("info", &["info:"], Duration::from_secs(6))?;
+    // bis 12 s: ältere Stände beendeten die info-Zeile erst mit der nächsten Protokollzeile (zu lang oder 64-Byte-Paket)
+    let info = g.befehl("info", &["info:"], Duration::from_secs(12))?;
     let geraet_chitu = crate::musik::ist_chitu(&info);
     let name = |chitu: bool| if chitu { "Chitu 2 HD" } else { "C2 Lite" };
     if abbild_chitu != geraet_chitu {
@@ -654,11 +654,20 @@ pub fn update_daten(g: &mut dyn Kanal, daten: &[u8], fortschritt: &mut dyn FnMut
     }
     // Gerätetyp-Prüfung (Chitu-Prüfung M-4): kein C2-Abbild aufs Chitu und umgekehrt (andere Platine, andere Pins)
     update_passt(g, daten)?;
-    let lang = Duration::from_secs(5);
+    // 12 s statt 5: Firmware bis 16o/CRg schickt manchmal genau 64 Byte (volles USB-Paket), Linux reicht die Antwort
+    // dann erst mit der nächsten Zeile weiter – spätestens mit dem Lebenszeichen nach 5 s.
+    let lang = Duration::from_secs(12);
     antwort_still(g.befehl(&format!("ota start {}", daten.len()), ANTWORT, lang)?)?;
     for (i, stueck) in daten.chunks(256).enumerate() {
         let hex: String = stueck.iter().map(|b| format!("{b:02x}")).collect();
-        let a = g.befehl(&format!("ota d {hex}"), ANTWORT, lang)?;
+        let a = match g.befehl(&format!("ota d {hex}"), ANTWORT, lang) {
+            Ok(a) => a,
+            Err(e) => {
+                // ohne Abbruch bliebe das Update in der Firmware aktiv (Sticks pausiert, kein Auto-Aus)
+                let _ = g.befehl("ota abbruch", ANTWORT, WARTEN);
+                return Err(e);
+            }
+        };
         if a.starts_with("fehler:") {
             let _ = g.befehl("ota abbruch", ANTWORT, WARTEN);
             return Err(a);
@@ -716,7 +725,7 @@ mod tests_update {
             assert_eq!(update_kennung(&d).map(|k| k.1), Some(true));
         }
         if let Ok(d) = std::fs::read(format!("{t}/c2-db_update_data.bin")) {
-            assert_eq!(update_kennung(&d), Some(("16o".to_string(), false)));
+            assert_eq!(update_kennung(&d), Some(("16p".to_string(), false)));
         }
     }
 }

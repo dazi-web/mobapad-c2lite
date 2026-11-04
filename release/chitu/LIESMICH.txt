@@ -1,4 +1,4 @@
-Chitu 2 HD Custom, Stand chitu-CRf (Firmware für den Mobapad Chitu 2 HD) – EXPERIMENTELL
+Chitu 2 HD Custom, Stand chitu-CRi (Firmware für den Mobapad Chitu 2 HD) – EXPERIMENTELL
 
 jl_isd.bin          Erstinstallation von der Werks-Firmware, nur über das USB-Kabel:
                     c2lite-custom installieren release/chitu/jl_isd.bin --usb

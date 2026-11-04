@@ -3,7 +3,7 @@
 A small easter egg: on the device it shows up as "C2 Lite dazi edition" (USB) or "C2 Lite dazi" (Bluetooth).
 
 Free replacement firmware for the Mobapad C2 Lite (Jieli AC635N/AC695N, BR23 family), built from the open Jieli
-SDK. Status 2026-10-31: stage 13b. Prebuilt firmware: `release/`. German version of this document:
+SDK. Status 2026-11-04: stage 16p. Prebuilt firmware: `release/`. German version of this document:
 `FIRMWARE.md`.
 
 > **At your own risk.** Only use on hardware you own. Always back up the whole flash before the first write (see
