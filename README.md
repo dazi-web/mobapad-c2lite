@@ -1,6 +1,7 @@
 # C2 Lite Custom
 
 Eigene Firmware für den Mobapad C2 Lite (Jieli BR23) und das Programm `c2lite-custom` zum Installieren und Einstellen.
+Eine experimentelle Variante gibt es für den Mobapad Chitu 2 HD (siehe [unten](#chitu-2-hd-experimentell)).
 
 English version: [`README.en.md`](README.en.md)
 
@@ -32,7 +33,7 @@ Das Programm gibt es auf Deutsch und Englisch (Umschalter DE/EN unten links; es 
 | ![Installieren über USB-Kabel mit eingebauter Firmware und Probelauf](docs/bilder/installieren.png) | ![Aufforderung beim Installieren: Home, Y und X leuchten auf dem Controller-Bild](docs/bilder/installieren-tasten.png) |
 | Installieren (USB-Kabel oder Bluetooth) | Installieren: Home + Y + X halten |
 
-## Installieren (Linux)
+## Installieren auf dem C2 Lite (Linux)
 
 Voraussetzungen: Linux auf x86_64, ein USB-Datenkabel, Internet für den ersten Lauf und `c2lite-custom`: fertig unter
 [Releases](https://github.com/dazi-web/mobapad-c2lite/releases) (glibc ≥ 2.31, z. B. Debian 11, Ubuntu 20.04 und neuer)
@@ -40,7 +41,7 @@ oder selbst bauen mit `cargo build --release` in [`c2lite-custom/`](c2lite-custo
 [`release/jl_isd.bin`](release/) ist im Programm eingebaut (Prüfsummen in `release/SHA256SUMS`); eine eigene Datei
 lässt sich wählen (selbst bauen siehe [`docs/FIRMWARE.md`](docs/FIRMWARE.md)).
 
-**Über das USB-Kabel (empfohlen, neu seit 31.10.2026):**
+**Über das USB-Kabel (empfohlen):**
 
 1. `c2lite-custom` starten, Seite „Installieren“, Weg „USB-Kabel“ (Firmware: eingebaut).
 2. Erst „Probelauf“: öffnet den Download-Modus und sichert den Speicher, schreibt nichts.
@@ -82,9 +83,8 @@ Läuft (an einem Gerät getestet):
   dort auch ein Klavier (Maus oder Tastatur, mit Aufnahme als Notendatei)
 - Updates per USB-Kabel, Rückweg zur Werks-Firmware
 
-Fehlt noch: Switch / Switch 2, Licht (Logo, Spieler-LEDs), Bewegungssensor, NFC. Behoben (Stand chitu-CRf): Neustarts
-durch den Watchdog, wenn das Programm Befehle schickte, aber die Ausgabe des Controllers nicht abholte. Startet der
-Controller doch einmal neu, sichert das Programm das Protokoll nach `~/.cache/c2lite-custom/`.
+Fehlt noch: Switch / Switch 2, Licht (Logo, Spieler-LEDs), Bewegungssensor, NFC. Startet der Controller unerwartet
+neu, sichert das Programm beim nächsten Verbinden das Protokoll nach `~/.cache/c2lite-custom/`.
 
 Installieren (nur Linux, nur über das USB-Kabel):
 
@@ -117,7 +117,7 @@ den Controller auf den Tisch legen.
 ## Risiken
 
 Beim Firmware-Tausch kann der Controller unbrauchbar werden. Das ist während der Entwicklung einmal passiert.
-Vorkehrungen:
+Vorkehrungen (C2 Lite; Rettung beim Chitu siehe oben):
 
 - Vor dem ersten Schreiben wird der komplette Speicher gesichert. Damit geht es zurück zur Werks-Firmware
   (Seite „Installieren“, „Zurück zur Werks-Firmware“; am Gerät getestet).
@@ -133,8 +133,8 @@ aufheben, sie passt nur zu diesem einen Controller. Die Garantie ist danach verm
 
 ## Entstehung
 
-Das Projekt ist in wenigen Tagen zusammen mit Claude (Anthropic, über Claude Code) als Co-Autor entstanden. Getestet wurde an einem
-Controller und einer Switch 2. Code lesen, bevor man ihm vertraut; Fehler gern melden.
+Das Projekt ist in wenigen Tagen zusammen mit Claude (Anthropic, über Claude Code) als Co-Autor entstanden. Getestet wurde an je
+einem C2 Lite und Chitu 2 HD und einer Switch 2. Code lesen, bevor man ihm vertraut; Fehler gern melden.
 
 ## Quellcode und Lizenz
 

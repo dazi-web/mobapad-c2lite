@@ -1,6 +1,7 @@
 # C2 Lite Custom
 
 Replacement firmware for the Mobapad C2 Lite (Jieli BR23) and the program `c2lite-custom` to install and configure it.
+An experimental variant exists for the Mobapad Chitu 2 HD (see [below](#chitu-2-hd-experimental)).
 
 Deutsche Version: [`README.md`](README.md)
 
@@ -33,7 +34,7 @@ The program speaks English and German: DE/EN switch at the bottom left, it start
 | ![Installing over the USB cable with built-in firmware and dry run](docs/bilder/installieren.png) | ![Prompt while installing: Home, Y and X light up on the controller picture](docs/bilder/installieren-tasten.png) |
 | Installing (USB cable or Bluetooth) | Installing: hold Home + Y + X |
 
-## Installing (Linux)
+## Installing on the C2 Lite (Linux)
 
 Requirements: Linux on x86_64, a USB data cable, internet for the first run and `c2lite-custom`: prebuilt under
 [Releases](https://github.com/dazi-web/mobapad-c2lite/releases) (glibc ≥ 2.31, e.g. Debian 11, Ubuntu 20.04 and
@@ -41,7 +42,7 @@ newer) or built yourself with `cargo build --release` in [`c2lite-custom/`](c2li
 [`release/jl_isd.bin`](release/) is built into the program (checksums in `release/SHA256SUMS`); a file of your own
 can be chosen instead (building it yourself: see [`docs/FIRMWARE.en.md`](docs/FIRMWARE.en.md)).
 
-**Via the USB cable (recommended, new since 2026-10-31):**
+**Via the USB cable (recommended):**
 
 1. Start `c2lite-custom`, page "Installieren", way "USB-Kabel" (firmware: built in).
 2. First the dry run ("Probelauf"): opens the download mode and backs up the flash, writes nothing.
@@ -83,9 +84,8 @@ Working (tested on one unit):
   which also has a piano (mouse or keyboard, recording to a note file)
 - Updates over the USB cable, way back to the factory firmware
 
-Missing so far: Switch / Switch 2, lights (logo, player LEDs), motion sensor, NFC. Fixed (version chitu-CRf): watchdog
-restarts when the program sent commands but did not read the controller's output. If the controller still restarts,
-the program saves the log to `~/.cache/c2lite-custom/`.
+Missing so far: Switch / Switch 2, lights (logo, player LEDs), motion sensor, NFC. If the controller restarts
+unexpectedly, the program saves the log to `~/.cache/c2lite-custom/` on the next connection.
 
 Install (Linux only, USB cable only):
 
@@ -117,7 +117,8 @@ comment `#`, e.g. [`docs/beispiel-melodie.txt`](docs/beispiel-melodie.txt). It s
 
 ## Risks
 
-Replacing firmware can make the controller unusable. It happened once during development. Precautions:
+Replacing firmware can make the controller unusable. It happened once during development. Precautions (C2 Lite; for
+the Chitu's rescue see above):
 
 - Before the first write the whole flash is backed up. It allows going back to the factory firmware
   (page "Installieren", "Zurück zur Werks-Firmware"; tested on the device).
@@ -133,8 +134,8 @@ only fits this one controller. The warranty is probably void afterwards. Use at 
 
 ## How it was made
 
-The project was built in a few days together with Claude (Anthropic, via Claude Code) as co-author. It was tested on one controller and
-one Switch 2. Read the code before trusting it; bug reports are welcome.
+The project was built in a few days together with Claude (Anthropic, via Claude Code) as co-author. It was tested on one
+C2 Lite, one Chitu 2 HD and one Switch 2. Read the code before trusting it; bug reports are welcome.
 
 ## Source code and license
 
