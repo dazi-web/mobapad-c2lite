@@ -665,7 +665,7 @@ index 96e411d..df6e3c3 100644
      {"gamebox",             3,     0,   1024,   128 },
  #endif
 diff --git a/apps/hid/board/br23/Makefile b/apps/hid/board/br23/Makefile
-index 075f777..2502149 100644
+index 075f777..35a6133 100644
 --- a/apps/hid/board/br23/Makefile
 +++ b/apps/hid/board/br23/Makefile
 @@ -169,6 +169,7 @@ INCLUDES := \
@@ -684,7 +684,7 @@ index 075f777..2502149 100644
  	../../../../apps/hid/config/lib_btctrler_config.c \
  	../../../../apps/hid/config/lib_btstack_config.c \
  	../../../../apps/hid/config/lib_driver_config.c \
-@@ -288,6 +290,18 @@ c_SRC_FILES := \
+@@ -288,6 +290,19 @@ c_SRC_FILES := \
  	../../../../apps/hid/modules/bt/ble_hogp.c \
  	../../../../apps/hid/modules/bt/edr_hid_user.c \
  	../../../../apps/hid/modules/misc.c \
@@ -700,6 +700,7 @@ index 075f777..2502149 100644
 +	../../../../apps/hid/modules/c2lite/c2_pro2.c \
 +	../../../../apps/hid/modules/c2lite/chitu.c \
 +	../../../../apps/hid/modules/c2lite/chitu_dac.c \
++	../../../../apps/hid/modules/c2lite/chitu_gyro.c \
  	../../../../apps/hid/modules/power/app_charge.c \
  	../../../../apps/hid/modules/power/app_chargestore.c \
  	../../../../apps/hid/modules/power/app_handshake.c \
@@ -1383,7 +1384,7 @@ index 0000000..e6d9632
 +#endif
 diff --git a/apps/hid/board/br23/board_c2lite_cfg.h b/apps/hid/board/br23/board_c2lite_cfg.h
 new file mode 100644
-index 0000000..98b3dd3
+index 0000000..bdc8192
 --- /dev/null
 +++ b/apps/hid/board/br23/board_c2lite_cfg.h
 @@ -0,0 +1,611 @@
@@ -1395,7 +1396,7 @@ index 0000000..98b3dd3
 +#ifdef CONFIG_BOARD_C2LITE
 +/* Chitu 2 HD (komplett/chitu2hd): eigene SDK-Kopie, Stufe C1 = Pin-Monitor mit Sicherheitsnetzen (chitu.c) */
 +#define C2_CHITU 1
-+#define C2_STAND "chitu-CRi"
++#define C2_STAND "chitu-CG4"
 +/* Mobapad C2 Lite (Jieli AC695x). Abgeleitet von board_ac635n_demo_cfg.h; alles, was ohne Pin-Karte
 + * unbekannte Pins treiben würde, ist aus. */
 +
@@ -4610,10 +4611,10 @@ index 0000000..dda57e2
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_eingaben.c b/apps/hid/modules/c2lite/c2_eingaben.c
 new file mode 100644
-index 0000000..477ff07
+index 0000000..f21711c
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_eingaben.c
-@@ -0,0 +1,1116 @@
+@@ -0,0 +1,1137 @@
 +/* C2 Lite: Eingaben lesen, als HID-Gamepad über USB senden und über das USB-Protokoll (c2_log) melden.
 + * Dazu Spieler-LEDs (c2_anzeige.c), Motoren bzw. Chitu-DAC, Akku- und Ladeerkennung.
 + * Pin-Karte und Abfrage-Ablauf aus der Werks-Firmware, am Gerät bestätigt:
@@ -4855,10 +4856,13 @@ index 0000000..477ff07
 +    /* Stellung gewechselt (PA3 = Switch, PC3 = PC): neu starten, damit sich USB passend anmeldet */
 +    static u32 wechsel_seit;
 +    int pa3 = !!(r & (1ULL << S_PA3)), pc3 = !!(r & (1ULL << S_PC3));
-+    if ((pa3 || pc3) && pa3 != c2_switch_modus()) {
++    /* Prüfung CG3 M6: nicht während eines Updates */
++    if ((pa3 || pc3) && pa3 != c2_switch_modus() && !c2_ota_promille()) {
 +        if (++wechsel_seit == 300 / TAKT_MS) {
 +            c2_log("Schieber: Moduswechsel %s -> Neustart\r\n", pa3 ? "Switch" : "PC");
 +            os_time_dly(5);
++            /* Chitu, Prüfung CG3 S1: zählt bewusst für N4 (kein chitu_netz_ruhe): würde der Schieber beim Start anders
++             * gelesen als in der Runde, endete die Schleife nach NETZ_GRENZE Starts im Wartemodus */
 +            p33_soft_reset();
 +        }
 +    } else {
@@ -5144,12 +5148,24 @@ index 0000000..477ff07
 +    led_manuell = C2_LED_AUTO;
 +}
 +
-+/* Maschinenlesbarer Zustand für Werkzeuge (c2lite-custom): Rollen-Bits als Hex, Achsen 0..1023, Akku, USB */
++#if C2_CHITU
++/* Ladedock (CRi): USB-5V und PA0 low, entprellt in der Tasten-Runde; für status (CG4) auf Dateiebene */
++static u8 dock_stabil;
++#endif
++
++/* Maschinenlesbarer Zustand für Werkzeuge (c2lite-custom): Rollen-Bits als Hex, Achsen 0..1023, Akku, USB.
++ * Chitu (CG4): dock = im Dock mit Strom (wie das Dock-Licht), pa0 = Dock-Kontakt roh (low = Kontakt, auch ohne Strom?) */
 +void c2_status_melden(void)
 +{
++#if C2_CHITU
++    c2_log("status: tasten=%08lx%08lx lx=%u ly=%u rx=%u ry=%u akku=%u usb=%d led=%02x dock=%u pa0=%d\r\n",
++           (u32)(alt_rollen >> 32), (u32)alt_rollen, status_achse[0], status_achse[1], status_achse[2], status_achse[3],
++           c2_akku_prozent(), gpio_read(IO_PORTB_05), led_maske, dock_stabil, gpio_read(IO_PORTA_00));
++#else
 +    c2_log("status: tasten=%08lx%08lx lx=%u ly=%u rx=%u ry=%u akku=%u usb=%d led=%02x\r\n", (u32)(alt_rollen >> 32),
 +           (u32)alt_rollen, status_achse[0], status_achse[1], status_achse[2], status_achse[3], c2_akku_prozent(),
 +           gpio_read(IO_PORTB_05), led_maske);
++#endif
 +}
 +
 +void c2_einstellungen_melden(void)
@@ -5404,6 +5420,12 @@ index 0000000..477ff07
 +    gpio_direction_output(IO_PORTA_08, 1);
 +    u64 r = phase_lesen(PHASE_A, ARRAY_SIZE(PHASE_A), 1);
 +    gpio_direction_output(IO_PORTA_08, 0);
++#if C2_CHITU
++    /* Gyro-Bus PB7/PB9 nur auf Befehl, bei PA8 low wie die Werks-FW (Zugriff zwischen den Abfragen), offener
++     * Kollektor; Plus/Minus gedrückt (jetzt oder letzte Runde) -> Runde fällt aus. Phase B stellt PB6/PB7 zurück. */
++    extern void chitu_gyro_runde(int plus_minus);
++    chitu_gyro_runde(!!(alt_rollen & ((1ULL << T_PLUS) | (1ULL << T_MINUS))));
++#endif
 +    r |= phase_lesen(PHASE_B, ARRAY_SIZE(PHASE_B), 0);
 +    r |= phase_lesen(DIREKT, ARRAY_SIZE(DIREKT), 0);
 +    c2_rgb_senden(); /* PA7 und PA8 sind hier low (siehe c2_rgb.c); Chitu ab CRi: Logo (PA7) + Dock (PA8) */
@@ -5432,9 +5454,9 @@ index 0000000..477ff07
 +        letzte_eingabe = runde;
 +    }
 +    usb_host_pruefen();
-+#if !C2_CHITU
-+    schieber_pruefen(r); /* Chitu: kein Schieber; beide Bits 0 hieße hier „Aus“ -> Soft-Off am Akku */
-+#endif
++    /* Chitu (CG3): Schieber wie C2 Lite (am Gerät belegt). „Aus“ (beide Bits 0, kein USB) meldet ausschalten() beim
++     * Chitu nur (kein Soft-Off, siehe dort). */
++    schieber_pruefen(r);
 +    ruhe_pruefen(gpio_read(IO_PORTB_05), usb_host_runde && runde - usb_host_runde < 200 / TAKT_MS,
 +                 ble_hid_is_connected() || (c2_switch_modus() && c2_switch_bt_verbunden()));
 +    {
@@ -5456,7 +5478,7 @@ index 0000000..477ff07
 +        {
 +            extern void chitu_klang(u16 *hz, u8 *pegel, u16 *nr);
 +            /* entprellt (Prüfung CRi S1): ein Wechsel gilt erst nach 10 gleichen Runden (100 ms) */
-+            static u8 dock_stabil, dock_neu_n;
++            static u8 dock_neu_n; /* dock_stabil auf Dateiebene (status, CG4) */
 +            static s8 dock_gemeldet = -1;
 +            u8 roh = lage.usb_5v && !gpio_read(IO_PORTA_00);
 +            if (roh == dock_stabil) {
@@ -8033,10 +8055,10 @@ index 0000000..0a877ed
 +#endif
 diff --git a/apps/hid/modules/c2lite/c2_switch.c b/apps/hid/modules/c2lite/c2_switch.c
 new file mode 100644
-index 0000000..dd35337
+index 0000000..ecb85df
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/c2_switch.c
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,867 @@
 +/* C2 Lite: Switch-Modus als „Pro Controller“ über USB (057E:2009) und klassisches Bluetooth, für Switch 1 und 2.
 + * Protokoll nach der öffentlichen Doku (github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering), Gegenprobe
 + * mit der Werks-Firmware (Analyse 30.10.: USB-OUT 0x1B66C, Unterbefehle 0xF004, SPI-Werte 0xF21A).
@@ -8075,6 +8097,7 @@ index 0000000..dd35337
 +static u8 voll;              /* nach 80 04: 0x30-Reports regelmäßig senden */
 +static u8 zeit;              /* Zeitzähler im Report */
 +static u8 spieler;           /* Spieler-LEDs, vom Unterbefehl 0x30 (Bit 0 = Spieler 1) */
++static u8 imu_an;            /* Unterbefehl 0x40 mit 1: Bewegungsdaten im 0x30 (Werks-FW 0x12fd6: 0 schaltet nicht ab) */
 +/* Empfangspuffer für 8 Pakete: die Konsole schickt Vibration und Unterbefehle schnell hintereinander */
 +#define RX_PLAETZE 8
 +static u8 rx_ring[RX_PLAETZE][64];
@@ -8100,12 +8123,11 @@ index 0000000..dd35337
 +static u8 bt_warte;          /* 10-ms-Schritte bis zum ersten Report nach dem HID-Connect */
 +static u8 spi_6000[0x100];   /* nachgebildeter SPI-Flash 0x6000..0x60FF */
 +
-+/* Schieber in Stellung PA3? Tastenleitung PA8 high, PA3 mit Pull-down lesen (wie die Phase A der Abfrage) */
++/* Schieber in Stellung PA3? Tastenleitung PA8 high, PA3 mit Pull-down lesen (wie die Phase A der Abfrage).
++ * Chitu (CG3, 4.11.): gleicher Schieber, am Gerät belegt (Phase A: PC = PC3, Switch = PA3) und wie die Werks-FW
++ * 0.20 (FUN_01e07fc8: PC3 -> PC, PA3 -> Switch). */
 +int c2_switch_modus(void)
 +{
-+#if C2_CHITU
-+    return 0; /* Chitu: kein Schieber an PA3/PC3 bekannt -> immer PC-Modus */
-+#endif
 +    if (modus < 0) {
 +        gpio_set_hd(IO_PORTA_08, 1);
 +        gpio_direction_output(IO_PORTA_08, 1);
@@ -8281,8 +8303,16 @@ index 0000000..dd35337
 +{
 +    memset(spi_6000, 0xFF, sizeof(spi_6000));
 +    /* 0x6020: IMU-Werkskalibrierung (übliche Standardwerte) */
++#if C2_CHITU
++    /* CG3 Chitu: Rohwerte des Sensors ohne Kalibrierung im Gerät -> Offsets 0; Empfindlichkeit wie die Werks-FW 0.20
++     * (Standard-Abbild app 0x5CF08: Beschl. 0x4000, Gyro 0x343B; deren Beschl.-Offsets gelten für ihr eigenes
++     * Abziehen im Gerät, das wir nicht machen) */
++    static const u8 IMU[24] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40,
++                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34};
++#else
 +    static const u8 IMU[24] = {0xD3, 0xFF, 0xD5, 0xFF, 0x55, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40,
 +                               0x19, 0x00, 0xDD, 0xFF, 0xDC, 0xFF, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34};
++#endif
 +    memcpy(spi_6000 + 0x20, IMU, sizeof(IMU));
 +    /* 0x603D: linker Stick (über Mitte, Mitte, unter Mitte), rechter Stick (Mitte, unter, über): Mitte 0x800,
 +     * Spanne 0x7FF in alle Richtungen (12 Bit: x | y << 12) */
@@ -8336,6 +8366,23 @@ index 0000000..dd35337
 +    stick(l->achsen[0], l->achsen[1], tx + 6);
 +    stick(l->achsen[2], l->achsen[3], tx + 9);
 +    tx[12] = 0x0B;
++}
++
++int c2_switch_imu_an(void)
++{
++    return c2_switch_modus() && imu_an;
++}
++
++/* CG3: Bewegungsdaten in Byte 13..48 des 0x30 (Chitu, chitu_gyro.c), nur nach Unterbefehl 0x40 (wie Werks-FW 0x4c46:
++ * sonst 0) */
++static void bewegung(void)
++{
++#if C2_CHITU
++    extern int chitu_gyro_bericht(u8 *d36);
++    if (imu_an) {
++        chitu_gyro_bericht(tx + 13);
++    }
++#endif
 +}
 +
 +/* HD-Vibration grob auf die zwei Motoren: Amplitude hoch (Byte 1, 0..0x64) und tief (Byte 3, 0x40..0x72), dann
@@ -8400,6 +8447,11 @@ index 0000000..dd35337
 +        d[0] = 0x01, d[1] = 0x00, d[2] = 0xFF, d[3] = 0x00, d[4] = 0x03, d[5] = 0x00, d[6] = 0x05, d[7] = 0x06;
 +        d[33] = 0x62;
 +        break;
++    case 0x40: /* IMU an: wie die Werks-FW (0x12fd6) nur mit Argument 1 einschalten, 0 schaltet nicht ab */
++        if (arg[0] == 1) {
++            imu_an = 1;
++        }
++        break;
 +    case 0x30: /* Spieler-LEDs: untere 4 Bit an, obere 4 Bit blinken */
 +        spieler = arg[0] & 0x0F ? arg[0] & 0x0F : arg[0] >> 4;
 +        break;
@@ -8433,7 +8485,7 @@ index 0000000..dd35337
 +                   konsole[3], konsole[2], konsole[1], konsole[0]);
 +        }
 +        break;
-+    default: /* 0x03 Modus, 0x08, 0x38 Home-Licht, 0x40 IMU, 0x41, 0x48 Vibration an, 0x22, 0x11 ...: nur bestätigen */
++    default: /* 0x03 Modus, 0x08, 0x38 Home-Licht, 0x41, 0x48 Vibration an, 0x22, 0x11 ...: nur bestätigen */
 +        break;
 +    }
 +    tx_len = 64;
@@ -8848,6 +8900,7 @@ index 0000000..dd35337
 +    if (voll) {
 +        tx_bt = 0;
 +        kopf(0x30, l);
++        bewegung();
 +        custom_hid_tx_data(0, tx, 64);
 +    } else if (c2_switch_bt_verbunden()) {
 +        if (!bt_war) {
@@ -8861,6 +8914,7 @@ index 0000000..dd35337
 +        if (bt_takt >= 15) {
 +            tx_bt = 1;
 +            kopf(0x30, l);
++            bewegung();
 +            if (c2_edr_senden(tx, 49)) {
 +                bt_takt -= 15;
 +                bt_voll++;
@@ -10537,10 +10591,10 @@ index 0000000..89390c6
 +#endif
 diff --git a/apps/hid/modules/c2lite/chitu.c b/apps/hid/modules/c2lite/chitu.c
 new file mode 100644
-index 0000000..e00f92f
+index 0000000..bace5d8
 --- /dev/null
 +++ b/apps/hid/modules/c2lite/chitu.c
-@@ -0,0 +1,834 @@
+@@ -0,0 +1,851 @@
 +/* Chitu 2 HD, Stufe C1: Sicherheitsnetze N3/N4 und Pin-Monitor (nur lesen und melden).
 + *
 + * Quellen (eigene Analyse der Werks-Firmware 0.20, Notizen nicht im Repo): Werks-FW 0.20 hat dieselbe Tastenmatrix wie der C2 Lite (Pin-Tabellen
@@ -11002,6 +11056,10 @@ index 0000000..e00f92f
 +static volatile u8 gueltig_neu;
 +static volatile u32 isr_ok, isr_fehler, isr_fehler_folge, isr_laeufe;
 +
++/* CG2h (Messung für den Gyro-Bus, chitu_gyro.c): Dauer dieses ISR-Rumpfs in TICK_CNT-Einheiten (letzte/größte) und
++ * ein Zähler, der am ENDE jedes Laufs erhöht wird (Gyro-Zugriff kann direkt danach starten). Nur Lesen von TICK_CNT. */
++extern volatile u32 chitu_stick_isr_n, chitu_stick_isr_letzt, chitu_stick_isr_max; /* in chitu_gyro.c */
++
 +static void sticks_isr(void *priv)
 +{
 +    SPUR_IRQ(0x51);
@@ -11010,6 +11068,7 @@ index 0000000..e00f92f
 +        SPUR_IRQ(0x50);
 +        return;
 +    }
++    u32 c0 = TICK_CNT;
 +    isr_laeufe++;
 +    rahmen_roh(isr_rahmen);
 +    u8 summe = 0, oder = 0;
@@ -11026,6 +11085,13 @@ index 0000000..e00f92f
 +        isr_fehler++;
 +        isr_fehler_folge++;
 +    }
++    u32 c1 = TICK_CNT;
++    u32 d = c1 >= c0 ? c1 - c0 : c1 + TICK_PRD - c0;
++    chitu_stick_isr_letzt = d;
++    if (d > chitu_stick_isr_max) {
++        chitu_stick_isr_max = d;
++    }
++    chitu_stick_isr_n++;
 +    SPUR_IRQ(0x50);
 +}
 +
@@ -11186,6 +11252,11 @@ index 0000000..e00f92f
 +        chitu_live_befehl(a + 5);
 +        return;
 +    }
++    if (!strncmp(a, "gyro ", 5)) {
++        extern void chitu_gyro_befehl(const char *a);
++        chitu_gyro_befehl(a + 5);
++        return;
++    }
 +    if (!strcmp(a, "ton") || !strncmp(a, "ton ", 4)) {
 +        extern void chitu_ton_befehl(const char *a);
 +        chitu_ton_befehl(a + 3);
@@ -11220,7 +11291,7 @@ index 0000000..e00f92f
 +        return;
 +    }
 +#endif
-+    c2_log("fehler: chitu ton <hz> <ms> <pegel%%> [l|r|lr] | ton stop | live <hz> <pegel%%> [ms] | live aus | takt <n> | roh | sticks an\r\n");
++    c2_log("fehler: chitu ton <hz> <ms> <pegel%%> [l|r|lr] | ton stop | live <hz> <pegel%%> [ms] | live aus | gyro … | takt <n> | roh | sticks an\r\n");
 +}
 +
 +/* Statt c2_eingaben_init (C2_CHITU) */
@@ -12067,6 +12138,1376 @@ index 0000000..cf46af8
 +    if (an) {
 +        dac_ruhe();
 +    }
++}
++
++#endif
+diff --git a/apps/hid/modules/c2lite/chitu_gyro.c b/apps/hid/modules/c2lite/chitu_gyro.c
+new file mode 100644
+index 0000000..5b2ea86
+--- /dev/null
++++ b/apps/hid/modules/c2lite/chitu_gyro.c
+@@ -0,0 +1,1364 @@
++/* Chitu 2 HD, Stufe CG1: Bewegungssensor (Gyro) suchen und roh lesen, nur auf Befehl.
++ *
++ * Quellen (eigene Analyse der Werks-Firmware 0.20, Notizen nicht im Repo):
++ *   Software-I2C an PB7 (SCL) und PB9 (SDA); Start/Byte/Stopp wie I2C-Standard, Takt durch die Firmware.
++ *   PB7 ist zugleich die Plus-Taste (Matrix Phase B), PB6 (Minus) das Chip-Select des NFC-Lesers, der PB7/PB9
++ *   als SPI mitbenutzt. Die Werks-Firmware lässt PB6 nach jedem Sensorzugriff high (NFC abgewählt).
++ *   Sensor: Die Werks-Firmware kennt mehrere Typen (Adressen 0x1D, 0x68, 0x6A, 0x6B; WHO_AM_I in 0x00, 0x0F oder
++ *   0x75). Welcher bestückt ist, ist offen -> „chitu gyro suche“.
++ *
++ * Werks-FW (geprüft 4.11.): Tastenabfrage app 0x1b210..0x1ba78 = PA8 high, Phase A lesen, PA8 low, Phase-B-Pins mit
++ * Pull-up, später Phase B lesen; PA8 bleibt bis zur nächsten Abfrage low. Der Gyro-Zugriff (Zeitgeber 0x18a0c,
++ * 5-6 ms) läuft also praktisch bei PA8 low und treibt SCL im Gegentakt, ohne auf die Plus-Taste zu achten.
++ * Plus (PB7) und Minus (PB6) stehen nur in Phase B, schalten also vermutlich ohne Diode direkt gegen PA8.
++ *
++ * Elektrisch (Prüfung CG1 + Nachprüfung): Zugriff nur bei PA8 low (wie Werk). Kein Pin wird hier aktiv high
++ * getrieben: SCL und SDA als offener Kollektor (low = Ausgang 0, high = Eingang mit Pull-up), PB6 Eingang mit
++ * Pull-up (hält den NFC-Leser abgewählt). Vorher werden PB6/PB7 mit Pull-up gelesen: bei PA8 low heißt low
++ * „gedrückt“ -> Runde fällt aus (ebenso, wenn Plus/Minus in der letzten Phase B gedrückt war). So treibt nichts
++ * gegeneinander, auch nicht der NFC-Leser (nur angewählt, wenn Minus gedrückt ist).
++ *
++ * Ablauf: Befehle legen nur einen Auftrag ab. Ausgeführt wird er in der Tasten-Runde (c2_eingaben.c, alle 10 ms)
++ * zwischen „PA8 low“ und Phase B. Ausgaben werden gesammelt und erst nach dem Loslassen des Busses geschrieben
++ * (c2_log kann über BLE warten). Die Suche verteilt sich auf mehrere Runden (8 Adressen je Runde).
++ *
++ * Schreibt nur auf Befehl („chitu gyro schreib“) in Register des Sensors (flüchtige Einstellungen, kein Flash). */
++#include "app_config.h"
++#include "system/includes.h"
++#include "asm/gpio.h"
++#include "generic/jiffies.h"
++#include "c2_log.h"
++
++#if C2_CHITU
++
++/* Alle drei Leitungen an Port B; Zugriff direkt auf die Register (CG2: die SDK-Funktionen kosteten ~7 µs je Aufruf).
++ * Register wie in der Werks-FW: +0 OUT, +4 IN, +8 DIR (1 = Eingang), +0xC DIE, +0x10 PU, +0x14 PD. */
++#define SCL BIT(7)
++#define SDA BIT(9)
++#define NFC_CS BIT(6)
++#define LIVE_MAX 24
++#define WARTE_MIN 5  /* Prüfung CG2d: darunter könnten Start/Stopp-Zeiten zu kurz werden (falsche Register beschrieben) */
++#define WARTE_MAX 60
++/* Busdauer begrenzen (Prüfung CG2d): Kosten eines Lesezugriffs in w()-Einheiten 119 + 36 je Byte; Obergrenze
++ * KOSTEN*warte ≤ BUDGET Schleifendurchläufe (≈5 ms bei ≈0,2 µs je Durchlauf) */
++#define KOSTEN(n) (119 + 36 * (n))
++#define KOSTEN_TEST (KOSTEN(1) + KOSTEN(9))
++#define BUDGET 25000
++/* Prüfung CG2h: mit „takten“ (bis 2,3 ms Warten vor dem Zugriff) nur das halbe Busbudget, Runde bleibt < 10 ms */
++#define BUDGET_JETZT (takten ? BUDGET / 2 : BUDGET)
++#define SUCHE_JE_RUNDE 4
++#define BELEGT_MAX 300 /* Runden (3 s) mit gedrückter Plus/Minus-Taste, dann gibt ein Auftrag auf */
++
++void delay(unsigned int);
++
++static u8 warte = 5; /* NOP-Schleifen je Viertel-Takt (CG2d, ≈0,2 µs je Durchlauf), „chitu gyro warte <n>“;
++                      * CG3: Standard 5 (= WARTE_MIN, CG2g mit kurz/schnell 1 gemessen, 0 falsch) */
++
++enum auftrag_art { A_NICHTS, A_SUCHE, A_LIES, A_SCHREIB, A_WERTE, A_TEST, A_MESS };
++static volatile struct {
++    u8 art;
++    u8 adr, reg, n, wert;
++    u8 suche_adr;   /* nächste Adresse der laufenden Suche */
++    u8 suche_treffer;
++    u16 belegt;     /* Runden, in denen Plus/Minus gedrückt war */
++    u32 suche_us;
++    u16 test_rest, test_n, test_fehler; /* „test“: verbleibende/gesamte Lesungen, falsche Lesungen */
++    u32 test_us_max, test_us_summe;
++} auftrag;
++
++static volatile struct {
++    u8 an;
++    u8 adr, reg, n;
++    u16 alle_runden, zaehler;
++    u16 fehler_folge;
++    u32 ok, fehler;
++} live;
++
++/* CG3: Dauerlesen für den Switch-Bericht 0x30 (c2_switch.c). Im Switch-Modus immer, im PC-Modus nur per
++ * „chitu gyro dauer 1“ (zum Prüfen mit „chitu gyro bericht“). Eine Probe je Tasten-Runde (10 ms), 12 Byte ab 0x22
++ * (Gyro XYZ, Beschl. XYZ, s16 LE). Läuft nur, wenn kein Befehlsauftrag und kein „live“ ansteht. Gelesen und
++ * geschrieben nur in der Tasten-Runde (chitu_gyro_runde, danach c2_switch_takt in derselben Runde); der Befehl
++ * „bericht“ liest nur zur Anzeige mit. */
++static struct {
++    u8 befehl;          /* „dauer 1“ */
++    u8 n_gueltig;       /* 0..2 gültige Proben im Speicher */
++    u8 alter;           /* Runden seit der neuesten Probe (255 = sehr alt) */
++    s16 p[2][6];        /* [0] neueste, [1] vorige: GX GY GZ AX AY AZ (Sensor) */
++    u8 folge;           /* Fehler in Folge; ab DAUER_FOLGE_MAX gesperrt bis „dauer 1“ bzw. Neustart */
++    u8 gesperrt;
++    u32 ok, fehler, abbrueche, belegt, us_max;
++} dauer;
++#define DAUER_FOLGE_MAX 50
++
++/* ---------- Ausgabe sammeln, nach dem Bus schreiben ---------- */
++#define ZEILEN 12
++#define ZEILE_LEN 120
++static char puffer[ZEILEN][ZEILE_LEN];
++static u8 n_zeilen;
++
++static void melden(const char *fmt, ...)
++{
++    if (n_zeilen >= ZEILEN) {
++        return;
++    }
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(puffer[n_zeilen++], ZEILE_LEN, fmt, ap);
++    va_end(ap);
++}
++
++static void ausgeben(void)
++{
++    for (int i = 0; i < n_zeilen; i++) {
++        c2_log("%s\r\n", puffer[i]);
++    }
++    n_zeilen = 0;
++}
++
++/* µs seit Start (wie c2_eingaben.c, Messung) */
++static u32 jetzt_us(void)
++{
++    u32 j1, c, j2;
++    do {
++        j1 = jiffies;
++        c = TICK_CNT;
++        j2 = jiffies;
++    } while (j1 != j2);
++    u32 prd = TICK_PRD ? TICK_PRD : 1;
++    return j1 * 10000 + (u32)((u64)c * 10000 / prd);
++}
++
++/* ---------- Bus ----------
++ * CG2d: Bus-Funktionen als RAM-Code (wie das Stick-Lesen in chitu.c), Wartezeit als NOP-Schleife statt delay().
++ * Mit delay() und Code im Flash kostete jeder Viertel-Takt ≈3,5 µs fest (CG2 am Gerät: 10 Byte ≈4 ms). */
++#define RAMCODE AT_VOLATILE_RAM_CODE
++#define IMMER static inline __attribute__((always_inline))
++#define HOCH_SCHLEIFEN 2000 /* Obergrenze fürs Warten auf einen Anstieg über den Pull-up (Schleifendurchläufe) */
++
++IMMER void w(void)
++{
++    for (u32 i = warte; i; i--) {
++        __asm__ volatile("nop");
++    }
++}
++
++IMMER int pegel(u32 bit)
++{
++    return !!(JL_PORTB->IN & bit);
++}
++
++/* Wartet, bis die losgelassene Leitung high liest (Anstieg über den Pull-up). 1 = high */
++IMMER int warte_hoch(u32 bit)
++{
++    for (int i = 0; i < HOCH_SCHLEIFEN && !pegel(bit); i++) {
++    }
++    return pegel(bit);
++}
++
++/* Offener Kollektor: low = Ausgang mit OUT 0, high = Eingang (Pull-up zieht hoch). OUT wird vor dem Umschalten auf
++ * Ausgang gelöscht, so entsteht nie ein High-Puls. */
++IMMER void leitung(u32 bit, int h)
++{
++    if (h) {
++        JL_PORTB->DIR |= bit;
++    } else {
++        JL_PORTB->OUT &= ~bit;
++        JL_PORTB->DIR &= ~bit;
++    }
++}
++
++/* Laufenden Zugriff abbrechen: 1 = SCL blieb nach dem Loslassen low (Plus gedrückt oder Sensor hält den Takt),
++ * 2 = Minus gedrückt (PB6 low = NFC-Leser angewählt, er könnte PB7 treiben), 3 = SDA stieg vor der Taktflanke nicht
++ * auf high (nur, wenn jemand SDA festhält; das laufende Byte bleibt unvollständig und wird wiederholt). Danach wird
++ * SCL nicht mehr gezogen. */
++static u8 abbruch;
++
++/* CG2f: Art der Interrupt-Sperre um „PB6 prüfen + SCL ziehen“. 0 = SDK local_irq_disable/enable (Standard, auch beim
++ * Start; CG2e gemessen ≈2,2 µs je Paar), 1 = nur cli/sti (die SDK-Funktion beginnt selbst mit cli und endet mit sti,
++ * setzt also ebenfalls voraus, dass Interrupts vorher an sind: hier immer Task-Kontext). Nur per Befehl, flüchtig. */
++static u8 sperre_kurz = 1; /* CG3: Standard kurz (Nutzer-Entscheidung 4.11. 22:20, CG2g gemessen, 0 falsch) */
++
++/* CG2g: 1 = je Datenbit nur 2 statt 4 Wartezeiten (eine in der High-, eine in der Low-Phase). Begründung: Befehle und
++ * Aufrufe zwischen den Flanken dauern schon ≥ 1 µs; Fast-Mode verlangt 1,3 µs low / 0,6 µs high / 0,1 µs Daten-
++ * Vorlauf, jede Phase behält zusätzlich ein w() (warte ≥ 5 ≈ 1 µs). Start/Stopp/ACK unverändert. Nur per Befehl. */
++static u8 schnell = 1; /* CG3: Standard 1 (wie sperre kurz); Schreiben und Init setzen schnell selbst auf 0 */
++
++/* CG2h: 1 = vor einem Lese-Auftrag/live warten, bis der Stick-Interrupt (alle 2 ms, ≈0,57 ms) gerade fertig ist, damit
++ * der Zugriff (≈1,3 ms) in die Lücke passt. Höchstens 3 ms (danach ohne Abgleich weiter). Nur per Befehl. */
++static u8 takten;
++static u32 takt_warte_summe, takt_warte_n, takt_verfehlt; /* Wartezeit in TICK_CNT-Einheiten */
++volatile u32 chitu_stick_isr_n, chitu_stick_isr_letzt, chitu_stick_isr_max; /* gesetzt in chitu.c sticks_isr */
++
++static u32 takt_n_verfehlt; /* Zählerstand beim letzten Verfehlen: erst wieder warten, wenn sich der Zähler bewegt */
++static void auf_stick_isr_warten(void)
++{
++    u32 prd = TICK_PRD ? TICK_PRD : 1;
++    u32 grenze = prd * 23 / 100; /* 2,3 ms = eine ISR-Periode + Reserve (Prüfung CG2h) */
++    u32 n0 = chitu_stick_isr_n, gesamt = 0, alt = TICK_CNT;
++    if (takt_verfehlt && n0 == takt_n_verfehlt) {
++        return; /* Stick-Interrupt steht (aus, pausiert, Update): nicht jede Runde warten (Prüfung CG2h) */
++    }
++    for (u32 runden = 0; chitu_stick_isr_n == n0 && gesamt < grenze && runden < 2000000; runden++) {
++        u32 c = TICK_CNT;
++        gesamt += c >= alt ? c - alt : c + prd - alt;
++        alt = c;
++    }
++    if (chitu_stick_isr_n == n0) {
++        takt_verfehlt++;
++        takt_n_verfehlt = n0;
++    }
++    takt_warte_summe += gesamt;
++    takt_warte_n++;
++}
++
++/* CG2f: Dauer je empfangenem Byte in lesen() (TICK_CNT-Einheiten, Periode TICK_PRD = 10 ms), Minimum/Maximum seit
++ * dem letzten Zurücksetzen. Minimum ≈ reine Busdauer, Maximum - Minimum ≈ Unterbrechungen. */
++static u32 byte_min = 0xFFFFFFFF, byte_max, byte_n;
++
++RAMCODE static void scl(int h)
++{
++    if (!h) {
++        /* Vor jedem Ziehen auf low: NFC-Leser abgewählt? (Prüfung CG1c: Minus während des Zugriffs) */
++        /* Prüfung und Schalten ohne Interrupt dazwischen (Prüfung CG2: sonst µs-Fenster für Minus) */
++        u8 kurz = sperre_kurz; /* Prüfung CG2f: einmal lesen, damit cli/sti bzw. SDK-Paar immer zusammenpassen */
++        if (kurz) {
++            __asm__ volatile("cli" ::: "memory");
++        } else {
++            local_irq_disable();
++        }
++        if (!abbruch && !pegel(NFC_CS)) {
++            abbruch = 2;
++        }
++        leitung(SCL, abbruch ? 1 : 0);
++        if (kurz) {
++            __asm__ volatile("sti" ::: "memory");
++        } else {
++            local_irq_enable();
++        }
++        return;
++    }
++    leitung(SCL, 1);
++    if (abbruch) {
++        return;
++    }
++    /* Takt-Dehnung bzw. Anstieg über den Pull-up: begrenzt warten, unabhängig von „warte“ */
++    if (!warte_hoch(SCL)) {
++        abbruch = 1;
++    }
++}
++
++IMMER void sda(int h)
++{
++    leitung(SDA, h);
++}
++
++/* SDA loslassen und vor der nächsten Taktflanke den Anstieg abwarten; sonst Abbruch 3. SCL ist dabei meist low:
++ * während des Wartens auch PB6 prüfen und SCL bei angewähltem NFC-Leser sofort freigeben (Prüfung CG2d). */
++IMMER void sda_hoch_sicher(void)
++{
++    leitung(SDA, 1);
++    if (abbruch) {
++        return;
++    }
++    for (int i = 0; i < HOCH_SCHLEIFEN && !pegel(SDA); i++) {
++        if (!pegel(NFC_CS)) {
++            leitung(SCL, 1);
++            abbruch = 2;
++            return;
++        }
++    }
++    if (!pegel(SDA)) {
++        abbruch = 3;
++    }
++}
++
++IMMER int sda_pegel(void)
++{
++    return pegel(SDA);
++}
++
++static void eingang_pu(u32 bit)
++{
++    JL_PORTB->DIR |= bit;
++    JL_PORTB->DIE |= bit;
++    JL_PORTB->PD &= ~bit;
++    JL_PORTB->PU |= bit;
++}
++
++/* Bereitet den Bus vor. 0 = ok, 1 = Plus/Minus gedrückt (Runde aussetzen), -1 = Bus hängt */
++static int bus_an(void)
++{
++    eingang_pu(NFC_CS);
++    eingang_pu(SCL);
++    eingang_pu(SDA);
++    w();
++    w();
++    if (!pegel(SCL) || !pegel(NFC_CS)) {
++        return 1; /* Plus oder Minus gedrückt (PA8 ist low) */
++    }
++    abbruch = 0;
++    /* Ein Sensor, der nach einem abgebrochenen Zugriff SDA hält, wird mit bis zu 9 Takten freigegeben */
++    for (int i = 0; i < 9 && !sda_pegel(); i++) {
++        scl(0);
++        w();
++        scl(1);
++        w();
++    }
++    if (abbruch) {
++        return 1;
++    }
++    if (!sda_pegel()) {
++        return -1;
++    }
++    return 0;
++}
++
++static void bus_aus(void)
++{
++    /* Ruhezustand: alles Eingang mit Pull-up (wie Plus/Minus in Phase B) */
++    eingang_pu(SCL);
++    eingang_pu(SDA);
++    eingang_pu(NFC_CS);
++}
++
++RAMCODE static void start(void)
++{
++    sda_hoch_sicher();
++    w();
++    scl(1);
++    w();
++    sda(0);
++    w();
++    scl(0);
++    w();
++}
++
++RAMCODE static void stopp(void)
++{
++    if (abbruch) {
++        /* Prüfung CG3 M3: nach einem Abbruch (z. B. Minus gedrückt = NFC angewählt) SDA nicht mehr ziehen, nur loslassen */
++        sda(1);
++        scl(1);
++        return;
++    }
++    sda(0);
++    w();
++    scl(1);
++    w();
++    sda(1);
++    w();
++}
++
++/* 1 = Bestätigung (ACK) */
++RAMCODE static int senden(u8 b)
++{
++    if (abbruch) {
++        return 0;
++    }
++    for (int i = 0; i < 8 && !abbruch; i++) {
++        if (b & 0x80) {
++            sda_hoch_sicher();
++        } else {
++            sda(0);
++        }
++        b <<= 1;
++        if (!schnell) {
++            w();
++        }
++        scl(1);
++        w();
++        if (!schnell) {
++            w();
++        }
++        scl(0);
++        w();
++    }
++    sda(1);
++    w();
++    scl(1);
++    w();
++    int ack = !abbruch && !sda_pegel();
++    w();
++    scl(0);
++    w();
++    return ack;
++}
++
++RAMCODE static u8 empfangen(int ack)
++{
++    u8 b = 0;
++    sda(1);
++    if (abbruch) {
++        return 0;
++    }
++    for (int i = 0; i < 8 && !abbruch; i++) {
++        if (!schnell) {
++            w(); /* bei schnell: die Low-Phase hat schon das w() nach scl(0) */
++        }
++        scl(1);
++        w();
++        b = (b << 1) | (sda_pegel() ? 1 : 0);
++        if (!schnell) {
++            w();
++        }
++        scl(0);
++        w();
++    }
++    sda(!ack);
++    if (!ack) {
++        warte_hoch(SDA); /* NACK: Anstieg abwarten; hält der Sensor SDA, hilft später die 9-Takt-Freigabe */
++    }
++    w();
++    scl(1);
++    w();
++    w();
++    scl(0);
++    w();
++    sda(1);
++    return b;
++}
++
++/* 0 = ok, -1 = keine Antwort auf Adresse, -2 = keine Antwort auf Register, -3 = abgebrochen (nochmal versuchen) */
++RAMCODE static int lesen(u8 adr, u8 reg, u8 *z, int n)
++{
++    if (abbruch) {
++        return -3;
++    }
++    start();
++    if (!senden(adr << 1)) {
++        stopp();
++        return abbruch ? -3 : -1;
++    }
++    if (!senden(reg)) {
++        stopp();
++        return abbruch ? -3 : -2;
++    }
++    start(); /* wiederholter Start */
++    if (!senden((adr << 1) | 1)) {
++        stopp();
++        return abbruch ? -3 : -1;
++    }
++    for (int i = 0; i < n; i++) {
++        u32 c0 = TICK_CNT;
++        z[i] = empfangen(i < n - 1);
++        u32 c1 = TICK_CNT;
++        u32 d = c1 >= c0 ? c1 - c0 : c1 + TICK_PRD - c0; /* höchstens ein Überlauf (Byte ≪ 10 ms) */
++        if (!abbruch) {
++            if (d < byte_min) {
++                byte_min = d;
++            }
++            if (d > byte_max) {
++                byte_max = d;
++            }
++            byte_n++;
++        }
++    }
++    stopp();
++    return abbruch ? -3 : 0;
++}
++
++/* 0 = ok, -1 = keine Bestätigung, -3 = abgebrochen (nochmal versuchen; Schreiben ist wiederholbar) */
++RAMCODE static int schreiben(u8 adr, u8 reg, u8 wert)
++{
++    /* Prüfung CG2g: Schreiben immer mit vollen Wartezeiten (knappe High-Phase könnte einen Takt verlieren lassen ->
++     * Rahmen verrutscht, falsches Register) */
++    u8 s_alt = schnell;
++    schnell = 0;
++    start();
++    int ok = senden(adr << 1) && senden(reg) && senden(wert);
++    stopp();
++    schnell = s_alt;
++    return abbruch ? -3 : ok ? 0 : -1;
++}
++
++/* Wie i2cdetect: in 0x30..0x37 und 0x50..0x5F mit Lesen prüfen (EEPROMs), sonst mit leerem Schreiben */
++RAMCODE static int antwortet(u8 adr)
++{
++    int lesend = (adr >= 0x30 && adr <= 0x37) || (adr >= 0x50 && adr <= 0x5F);
++    start();
++    int ack = senden((adr << 1) | (lesend ? 1 : 0));
++    if (ack && lesend) {
++        empfangen(0);
++    }
++    stopp();
++    return ack && !abbruch;
++}
++
++/* ---------- Messung (CG2e): wohin geht die Busdauer? ----------
++ * Je Baustein 100 Durchläufe, Zeit über jetzt_us (die leere Schleife wird abgezogen). Takt-Pulse nur bei SDA high
++ * (ohne Start-Bedingung ignoriert der Sensor sie), SDA wird nur bei SCL low bewegt (keine Start/Stopp-Bedingung).
++ * Alle Low-Phasen über scl(0) bzw. bei SCL low, also mit der Minus-Prüfung wie im normalen Zugriff. */
++#define MESS_K 1000 /* leer, irq, in, dir */
++#define MESS_KW 100 /* w() */
++#define MESS_PULSE 20
++enum { M_LEER, M_W, M_IRQ, M_IN, M_DIR, M_TAKT, M_SCL_SUM, M_SCL_MAX, M_SDA_SUM, M_SDA_MAX, M_LESEN, M_ANZ };
++
++RAMCODE static void messen(u32 *m)
++{
++    u32 t;
++    if (abbruch) {
++        return;
++    }
++    /* Prüfung CG2e: erst eine Stopp-Bedingung (falls der Sensor nach einem früheren Abbruch noch mitten in einem
++     * Zugriff steht, takten die Pulse unten sonst Einsen in Register) */
++    scl(0);
++    sda(0);
++    w();
++    scl(1);
++    w();
++    sda_hoch_sicher();
++    if (abbruch) {
++        return;
++    }
++    (void)jetzt_us(); /* Blindaufruf: jetzt_us liegt im Flash, erster Aufruf sonst mit Cache-Fehlgriff */
++    t = jetzt_us();
++    for (int i = 0; i < MESS_K; i++) {
++        __asm__ volatile("");
++    }
++    m[M_LEER] = jetzt_us() - t;
++
++    t = jetzt_us();
++    for (int i = 0; i < MESS_KW; i++) {
++        w();
++    }
++    m[M_W] = jetzt_us() - t;
++
++    t = jetzt_us();
++    for (int i = 0; i < MESS_K; i++) {
++        local_irq_disable();
++        local_irq_enable();
++    }
++    m[M_IRQ] = jetzt_us() - t;
++
++    t = jetzt_us();
++    for (int i = 0; i < MESS_K; i++) {
++        (void)JL_PORTB->IN;
++    }
++    m[M_IN] = jetzt_us() - t;
++
++    t = jetzt_us();
++    for (int i = 0; i < MESS_K; i++) {
++        JL_PORTB->DIR |= SDA; /* SDA ist schon losgelassen (Eingang): ändert nichts am Pin */
++    }
++    m[M_DIR] = jetzt_us() - t;
++
++    /* Takt-Pulse wie im Zugriff (scl mit Minus-Prüfung und Warten auf den Anstieg), SDA bleibt high */
++    t = jetzt_us();
++    for (int i = 0; i < MESS_PULSE && !abbruch; i++) {
++        scl(0);
++        w();
++        scl(1);
++        w();
++    }
++    m[M_TAKT] = jetzt_us() - t;
++
++    /* Anstieg SCL: Schleifen bis high nach dem Loslassen */
++    for (int i = 0; i < MESS_PULSE && !abbruch; i++) {
++        scl(0);
++        if (abbruch) {
++            break;
++        }
++        w();
++        JL_PORTB->DIR |= SCL;
++        u32 n = 0;
++        while (n < HOCH_SCHLEIFEN && !pegel(SCL)) {
++            n++;
++        }
++        if (!pegel(SCL)) {
++            abbruch = 1;
++        }
++        m[M_SCL_SUM] += n;
++        if (n > m[M_SCL_MAX]) {
++            m[M_SCL_MAX] = n;
++        }
++        w();
++    }
++
++    /* Anstieg SDA: nur bei SCL low ziehen und loslassen, danach ein Takt-Puls mit SDA high */
++    for (int i = 0; i < MESS_PULSE && !abbruch; i++) {
++        scl(0);
++        if (abbruch) {
++            break;
++        }
++        sda(0);
++        w();
++        JL_PORTB->DIR |= SDA;
++        u32 n = 0;
++        while (n < HOCH_SCHLEIFEN && !pegel(SDA)) {
++            if (!pegel(NFC_CS)) { /* Prüfung CG2e: Minus während SCL low -> SCL sofort freigeben */
++                leitung(SCL, 1);
++                abbruch = 2;
++                break;
++            }
++            n++;
++        }
++        if (abbruch) {
++            break;
++        }
++        if (!pegel(SDA)) {
++            abbruch = 3;
++        }
++        m[M_SDA_SUM] += n;
++        if (n > m[M_SDA_MAX]) {
++            m[M_SDA_MAX] = n;
++        }
++        w();
++        scl(1);
++        w();
++    }
++}
++
++/* Register nur bei den Adressen lesen, die die Werks-Firmware für Bewegungssensoren nutzt (und deren Alternativen) */
++static int sensor_adresse(u8 adr)
++{
++    return adr == 0x18 || adr == 0x19 || adr == 0x1D || adr == 0x1E || (adr >= 0x68 && adr <= 0x6B);
++}
++
++static void suche_schritt(void)
++{
++    u8 adr = auftrag.suche_adr;
++    /* Bei Abbruch bleibt die Adresse stehen und wird in der nächsten Runde wiederholt */
++    for (int k = 0; k < SUCHE_JE_RUNDE && adr <= 0x77; k++) {
++        int a = antwortet(adr);
++        if (abbruch) {
++            break;
++        }
++        if (a && !sensor_adresse(adr)) {
++            auftrag.suche_treffer++;
++            melden("info: gyro adr=0x%02x antwortet", adr);
++        } else if (a) {
++            u8 r00 = 0, r0f = 0, r75 = 0;
++            int e00 = lesen(adr, 0x00, &r00, 1), e0f = lesen(adr, 0x0F, &r0f, 1), e75 = lesen(adr, 0x75, &r75, 1);
++            if (abbruch) {
++                break;
++            }
++            auftrag.suche_treffer++;
++            melden("info: gyro adr=0x%02x reg00=%s%02x reg0f=%s%02x reg75=%s%02x", adr, e00 ? "!" : "", r00,
++                   e0f ? "!" : "", r0f, e75 ? "!" : "", r75);
++        }
++        adr++;
++    }
++    auftrag.suche_adr = adr;
++}
++
++static void hex_zeile(const char *kopf, const u8 *z, int n, u32 us)
++{
++    char t[LIVE_MAX * 3 + 1];
++    int p = 0;
++    static const char HEX[] = "0123456789abcdef";
++    for (int i = 0; i < n; i++) {
++        t[p++] = HEX[z[i] >> 4];
++        t[p++] = HEX[z[i] & 15];
++        t[p++] = ' ';
++    }
++    t[p ? p - 1 : 0] = 0;
++    if (us) {
++        melden("%s %s (%lu us)", kopf, t, us);
++    } else {
++        melden("%s %s", kopf, t);
++    }
++}
++
++static void bytes_zurueck(void)
++{
++    byte_min = 0xFFFFFFFF;
++    byte_max = 0;
++    byte_n = 0;
++}
++
++/* TICK_CNT-Einheiten in ns (Periode TICK_PRD = 10 ms) */
++static u32 tick_ns(u32 t)
++{
++    u32 prd = TICK_PRD ? TICK_PRD : 1;
++    return (u32)((u64)t * 10000000ULL / prd);
++}
++
++static void bytes_melden(void)
++{
++    if (byte_n) {
++        melden("ok: gyro bytes n=%lu min=%luns max=%luns sperre=%s", byte_n, tick_ns(byte_min), tick_ns(byte_max),
++               sperre_kurz ? "kurz" : "sdk");
++    }
++}
++
++static void auftrag_ende(void)
++{
++    auftrag.belegt = 0;
++    auftrag.art = A_NICHTS;
++}
++
++/* ---------- Sensor einstellen (CG2) ----------
++ * Quelle: Werks-FW 0.20, Sensortabelle Typ 0x14 (app 0x32F0C + 0x14*15): I2C 0x6A, WHO_AM_I Reg 0x0F = 0x70,
++ * Init-Paare (Wert, Register) bei app 0x294DE: 0x12=44, 0x10=07, 0x11=07, 0x15=04, 0x16=01, 0x17=02, 0x18=04
++ * (am Gerät 4.11. als einziger Baustein am Bus belegt). Lesart nach Registerplan LSM6DSV (Vermutung): CTRL3 Block-
++ * Update + Autoinkrement, Beschl./Gyro 240 Hz, Gyro ±2000 dps, Beschl. ±8 g, Filter. Daten little-endian:
++ * 0x20 Temperatur, 0x22 Gyro X/Y/Z, 0x28 Beschl. X/Y/Z.
++ * Geschrieben wird nur, wenn an 0x6A die Kennung 0x70 antwortet. Flüchtig im Sensor, nach jedem Start neu. */
++#define IMU_ADR 0x6A
++#define IMU_KENNUNG 0x70
++static const u8 IMU_INIT[][2] = {{0x12, 0x44}, {0x10, 0x07}, {0x11, 0x07}, {0x15, 0x04},
++                                 {0x16, 0x01}, {0x17, 0x02}, {0x18, 0x04}};
++#define INIT_NACH_RUNDEN 50 /* 500 ms nach dem Start */
++static s8 init_stand;        /* 0 = ausstehend, 1 = eingestellt, -1 = kein Sensor bzw. aufgegeben */
++static u16 init_runde, init_versuche;
++
++/* Ein Init-Versuch. 1 = fertig (init_stand gesetzt), 0 = abgebrochen (nächste Runde nochmal).
++ * Mit festem, langsamem Takt (Prüfung CG2): ein verfälschtes Adressbyte könnte sonst ein fremdes Register treffen. */
++#define INIT_WARTE 50 /* deutlich langsamer als der Standard (≈10 µs je Viertel-Takt) */
++static int init_schritt_takt(void);
++static int init_schritt(void)
++{
++    u8 w_alt = warte, s_alt = schnell;
++    warte = INIT_WARTE;
++    schnell = 0;
++    int r = init_schritt_takt();
++    warte = w_alt;
++    schnell = s_alt;
++    return r;
++}
++
++static int init_schritt_takt(void)
++{
++    u8 k = 0;
++    int e = lesen(IMU_ADR, 0x0F, &k, 1);
++    if (e == -3) {
++        return 0;
++    }
++    if (e || k != IMU_KENNUNG) {
++        init_stand = -1;
++        melden("info: gyro kein Sensor eingestellt (0x%02x: %s, Kennung %02x statt %02x)", IMU_ADR,
++               e ? "keine Antwort" : "fremde Kennung", k, IMU_KENNUNG);
++        return 1;
++    }
++    for (int i = 0; i < ARRAY_SIZE(IMU_INIT); i++) {
++        e = schreiben(IMU_ADR, IMU_INIT[i][0], IMU_INIT[i][1]);
++        if (e == -3) {
++            return 0;
++        }
++    }
++    /* Zurücklesen: Register 0x10..0x18 in einem Zug */
++    u8 r[9];
++    e = lesen(IMU_ADR, 0x10, r, sizeof(r));
++    if (e == -3) {
++        return 0;
++    }
++    int falsch = e ? 1 : 0;
++    for (int i = 0; !e && i < ARRAY_SIZE(IMU_INIT); i++) {
++        if (r[IMU_INIT[i][0] - 0x10] != IMU_INIT[i][1]) {
++            falsch++;
++        }
++    }
++    if (falsch) {
++        init_stand = -1;
++        melden("fehler: gyro Einstellung nicht übernommen (%d Register falsch)", falsch);
++        return 1;
++    }
++    init_stand = 1;
++    melden("info: gyro bereit (0x%02x, Kennung %02x, wie Werk: 240 Hz, +-2000 dps, +-8 g)", IMU_ADR, k);
++    return 1;
++}
++
++/* CG3: Bus hängt oder Sensor antwortet nicht: zählen, nach DAUER_FOLGE_MAX in Folge Dauerlesen sperren (sonst
++ * jede Runde Bus-Freigabe und Fehlversuch) */
++static void dauer_fehler(void)
++{
++    dauer.fehler++;
++    if (++dauer.folge >= DAUER_FOLGE_MAX) {
++        dauer.gesperrt = 1;
++        dauer.n_gueltig = 0;
++        melden("fehler: gyro dauer gesperrt (%u Fehler in Folge)", DAUER_FOLGE_MAX);
++    }
++}
++
++/* Aus der Tasten-Runde, bei PA8 low vor Phase B (siehe oben); plus_minus = in der letzten Runde gedrückt */
++void chitu_gyro_runde(int plus_minus)
++{
++    u8 art = auftrag.art;
++    int live_jetzt = live.an && ++live.zaehler >= live.alle_runden;
++    int init_jetzt = init_stand == 0 && ++init_runde >= INIT_NACH_RUNDEN;
++    extern int c2_switch_imu_an(void);
++    /* CG3: Dauerlesen nur mit eingestelltem Sensor und wenn sonst nichts ansteht (Aufträge/live haben Vorrang); im
++     * Switch-Modus erst, wenn die Konsole die Bewegungsdaten eingeschaltet hat (Unterbefehl 0x40, Prüfung CG3 M2) */
++    int dauer_jetzt = init_stand == 1 && !dauer.gesperrt && (dauer.befehl || c2_switch_imu_an()) && art == A_NICHTS &&
++                      !live_jetzt;
++    if (dauer.alter < 255) {
++        dauer.alter++; /* wird bei einer neuen Probe auf 0 gesetzt */
++    }
++    if (art == A_NICHTS && !live_jetzt && !init_jetzt && !dauer_jetzt) {
++        return;
++    }
++    if (dauer_jetzt && plus_minus) {
++        dauer.belegt++;
++    }
++    if (live_jetzt) {
++        live.zaehler = 0;
++    }
++    if (takten && !plus_minus && !init_jetzt &&
++        (live_jetzt || art == A_LIES || art == A_WERTE || art == A_TEST)) {
++        auf_stick_isr_warten();
++    }
++    int b = plus_minus ? 1 : bus_an();
++    if (b) {
++        bus_aus();
++        if (b < 0) {
++            if (art != A_NICHTS || live_jetzt) {
++                melden("fehler: gyro Bus hängt (SDA bleibt low)");
++            }
++            if (init_jetzt) {
++                init_stand = -1;
++                melden("fehler: gyro Einstellung: Bus hängt (SDA bleibt low)");
++            }
++            if (art != A_NICHTS) {
++                auftrag_ende();
++            }
++            if (live_jetzt) {
++                live.fehler++;
++            }
++            if (dauer_jetzt) {
++                dauer_fehler();
++            }
++            if (live_jetzt && ++live.fehler_folge >= 20) {
++                live.an = 0;
++                melden("fehler: gyro live aus (Bus hängt)");
++            }
++        }
++        /* Plus/Minus gedrückt: Init wartet (kein Buszugriff, zählt nicht als Fehlversuch) */
++        if (b > 0 && art != A_NICHTS && ++auftrag.belegt >= BELEGT_MAX) {
++            melden("fehler: gyro 3 s lang kein Zugriff (Plus/Minus gedrückt oder Takt hängt), Auftrag beendet");
++            auftrag_ende();
++        }
++        ausgeben();
++        return;
++    }
++    u32 t0 = jetzt_us();
++    if (init_jetzt && !init_schritt() && ++init_versuche >= BELEGT_MAX) {
++        init_stand = -1;
++        melden("fehler: gyro Einstellung nach 3 s aufgegeben (Plus/Minus gedrückt oder Takt hängt)");
++    }
++    if (init_jetzt && init_stand != 0) {
++        bus_aus();
++        ausgeben();
++        return; /* Aufträge in der nächsten Runde */
++    }
++    if (art != A_NICHTS) {
++        u8 z[LIVE_MAX];
++        int e;
++        switch (art) {
++        case A_SUCHE:
++            suche_schritt();
++            auftrag.suche_us += jetzt_us() - t0;
++            if (auftrag.suche_adr > 0x77) {
++                melden("ok: gyro suche fertig, %u Adresse(n) antworten (warte=%u, Busdauer %lu us)",
++                       auftrag.suche_treffer, warte, auftrag.suche_us);
++                auftrag_ende();
++            }
++            break;
++        case A_LIES:
++            e = lesen(auftrag.adr, auftrag.reg, z, auftrag.n);
++            if (e == -3) {
++                break; /* nächste Runde nochmal */
++            }
++            if (e) {
++                melden("fehler: gyro lies adr=0x%02x reg=0x%02x: %s", auftrag.adr, auftrag.reg,
++                       e == -1 ? "Adresse ohne Antwort" : "Register ohne Antwort");
++            } else {
++                char kopf[24];
++                snprintf(kopf, sizeof(kopf), "ok: gyro %02x/%02x:", auftrag.adr, auftrag.reg);
++                hex_zeile(kopf, z, auftrag.n, jetzt_us() - t0);
++                bytes_melden();
++            }
++            auftrag_ende();
++            break;
++        case A_WERTE:
++            e = lesen(IMU_ADR, 0x20, z, 14);
++            if (e == -3) {
++                break; /* nächste Runde nochmal */
++            }
++            if (e) {
++                melden("fehler: gyro werte: 0x%02x antwortet nicht", IMU_ADR);
++            } else {
++                s16 v[7];
++                for (int i = 0; i < 7; i++) {
++                    v[i] = (s16)(z[2 * i] | (z[2 * i + 1] << 8));
++                }
++                /* Temperatur 256 LSB/°C ab 25 °C (Vermutung Registerplan), hier in Zehntel */
++                melden("ok: gyro werte g=%d,%d,%d a=%d,%d,%d t=%d (%lu us, init=%d)", v[1], v[2], v[3], v[4], v[5],
++                       v[6], 250 + (v[0] * 10) / 256, jetzt_us() - t0, init_stand);
++            }
++            auftrag_ende();
++            break;
++        case A_TEST: {
++            /* Kennung + Register 0x10..0x18 lesen und mit dem Sollstand vergleichen (Takt-Zuverlässigkeit) */
++            u8 k = 0, r[9];
++            int e1 = lesen(IMU_ADR, 0x0F, &k, 1);
++            int e2 = e1 ? e1 : lesen(IMU_ADR, 0x10, r, sizeof(r));
++            if (e1 == -3 || e2 == -3) {
++                break; /* nächste Runde nochmal */
++            }
++            u32 us = jetzt_us() - t0;
++            int falsch = e2 || k != IMU_KENNUNG;
++            for (int i = 0; !falsch && init_stand == 1 && i < ARRAY_SIZE(IMU_INIT); i++) {
++                falsch = r[IMU_INIT[i][0] - 0x10] != IMU_INIT[i][1];
++            }
++            auftrag.test_fehler += falsch;
++            auftrag.test_us_summe += us;
++            if (us > auftrag.test_us_max) {
++                auftrag.test_us_max = us;
++            }
++            if (--auftrag.test_rest == 0) {
++                melden("ok: gyro test %u Lesungen, %u falsch, je %lu us (max %lu), warte=%u, Register %s", auftrag.test_n,
++                       auftrag.test_fehler, auftrag.test_us_summe / auftrag.test_n, auftrag.test_us_max, warte,
++                       init_stand == 1 ? "mit Sollwerten verglichen" : "nur Kennung verglichen");
++                bytes_melden();
++                if (takten) {
++                    melden("ok: gyro takten warten je %luus (%lu mal), verfehlt %lu",
++                           takt_warte_n ? tick_ns(takt_warte_summe / takt_warte_n) / 1000 : 0, takt_warte_n, takt_verfehlt);
++                }
++                auftrag_ende();
++            }
++            break;
++        }
++        case A_MESS: {
++            u32 m[M_ANZ];
++            memset(m, 0, sizeof(m));
++            messen(m);
++            if (abbruch) {
++                break; /* nächste Runde nochmal */
++            }
++            u8 k = 0;
++            u32 t = jetzt_us();
++            int e1 = lesen(IMU_ADR, 0x0F, &k, 1);
++            m[M_LESEN] = jetzt_us() - t;
++            if (e1 == -3) {
++                break;
++            }
++            /* ns je Durchlauf = (Zeit - leere Schleife) * 1000 / 1000; w() mit 100 Durchläufen */
++#define NS(x) (m[x] > m[M_LEER] ? m[x] - m[M_LEER] : 0)
++            u32 leer_w = m[M_LEER] * MESS_KW / MESS_K;
++            melden("ok: gyro mess warte=%d leer=%luns w=%luns irq=%luns in=%luns dir=%luns puls=%luns", warte,
++                   m[M_LEER], (m[M_W] > leer_w ? m[M_W] - leer_w : 0) * 1000 / MESS_KW, NS(M_IRQ), NS(M_IN), NS(M_DIR),
++                   m[M_TAKT] * 1000 / MESS_PULSE);
++#undef NS
++            melden("ok: gyro mess anstieg scl=%lu/%lu sda=%lu/%lu (Schleifen Summe/max bei %d Pulsen) lesen1=%luus "
++                   "(%s)", m[M_SCL_SUM], m[M_SCL_MAX], m[M_SDA_SUM], m[M_SDA_MAX], MESS_PULSE, m[M_LESEN],
++                   e1 ? "Fehler" : k == IMU_KENNUNG ? "Kennung ok" : "Kennung falsch");
++            melden("ok: gyro mess takt sys=%d lsb=%d Hz", clk_get("sys"), clk_get("lsb"));
++            auftrag_ende();
++            break;
++        }
++        case A_SCHREIB:
++            e = schreiben(auftrag.adr, auftrag.reg, auftrag.wert);
++            if (e == -3) {
++                break; /* nächste Runde nochmal */
++            }
++            melden("%s: gyro schreib adr=0x%02x reg=0x%02x wert=0x%02x", e ? "fehler" : "ok", auftrag.adr,
++                   auftrag.reg, auftrag.wert);
++            auftrag_ende();
++            break;
++        default:
++            auftrag_ende();
++            break;
++        }
++    }
++    if (live_jetzt) {
++        u8 z[LIVE_MAX];
++        if (lesen(live.adr, live.reg, z, live.n)) {
++            live.fehler++;
++            if (++live.fehler_folge >= 20) {
++                live.an = 0;
++                melden("fehler: gyro live aus (20 Fehler in Folge)");
++            } else if (live.fehler % 50 == 1) {
++                melden("gyro live: Fehler (%lu)", live.fehler);
++            }
++        } else {
++            live.ok++;
++            live.fehler_folge = 0;
++            hex_zeile("gyro live:", z, live.n, 0);
++        }
++    }
++    if (dauer_jetzt) {
++        u8 z[12];
++        u32 t = jetzt_us();
++        int e = lesen(IMU_ADR, 0x22, z, sizeof(z));
++        t = jetzt_us() - t;
++        if (e == -3) {
++            dauer.abbrueche++; /* Plus/Minus während des Zugriffs: Probe fällt aus, nächste Runde neu */
++        } else if (e) {
++            dauer_fehler();
++        } else {
++            dauer.folge = 0;
++            memcpy(dauer.p[1], dauer.p[0], sizeof(dauer.p[0]));
++            for (int i = 0; i < 6; i++) {
++                dauer.p[0][i] = (s16)(z[2 * i] | (z[2 * i + 1] << 8));
++            }
++            if (dauer.n_gueltig < 2) {
++                dauer.n_gueltig++;
++            }
++            dauer.alter = 0;
++            dauer.ok++;
++            if (t > dauer.us_max) {
++                dauer.us_max = t;
++            }
++        }
++    }
++    /* Abgebrochener Auftrag: wird wiederholt, nach BELEGT_MAX Runden aufgegeben (keine Meldung je Runde) */
++    if (abbruch && auftrag.art != A_NICHTS && ++auftrag.belegt >= BELEGT_MAX) {
++        melden("fehler: gyro Zugriff %s, Auftrag nach 3 s beendet",
++               abbruch == 2 ? "abgebrochen (Minus gedrückt)" : abbruch == 3 ? "abgebrochen (SDA stieg nicht)"
++                                                                       : "abgebrochen (Plus gedrückt oder Takt hängt)");
++        auftrag_ende();
++    }
++    bus_aus();
++    ausgeben();
++}
++
++/* ---------- Lückensuche (CG2g) ----------
++ * Läuft im Befehls-Task (kein Bus), 6 ms lang mit Interrupts an: liest TICK_CNT so schnell es geht und hält jede
++ * Lücke > 20 µs fest (Zeitpunkt ab Beginn, Dauer). Zeigt, wer den Task wie oft wie lange unterbricht. */
++#define LUECKEN_MAX 10
++static void luecken_suchen(void)
++{
++    u32 prd = TICK_PRD ? TICK_PRD : 1;
++    u32 grenze = prd / 500;     /* 20 µs */
++    u32 dauer = prd * 6 / 10;   /* 6 ms */
++    u32 bei[LUECKEN_MAX], lang[LUECKEN_MAX];
++    u32 n = 0, summe = 0, gesamt = 0, alt = TICK_CNT;
++    /* Prüfung CG2g: Obergrenze, falls TICK_CNT stehen bliebe (sonst Endlosschleife) */
++    for (u32 runden = 0; gesamt < dauer && runden < 2000000; runden++) {
++        u32 c = TICK_CNT;
++        u32 d = c >= alt ? c - alt : c + prd - alt;
++        alt = c;
++        if (d > grenze) {
++            if (n < LUECKEN_MAX) {
++                bei[n] = gesamt;
++                lang[n] = d;
++            }
++            n++;
++            summe += d;
++        }
++        gesamt += d;
++    }
++    c2_log("ok: gyro luecken n=%lu summe=%luus in %luus (>20us)\r\n", n, tick_ns(summe) / 1000, tick_ns(gesamt) / 1000);
++    for (u32 i = 0; i < n && i < LUECKEN_MAX; i++) {
++        c2_log("  luecke bei %luus dauer %luus\r\n", tick_ns(bei[i]) / 1000, tick_ns(lang[i]) / 1000);
++    }
++}
++
++/* ---------- CG3: Bewegungsdaten für den Switch-Bericht 0x30 ----------
++ * Wie die Werks-FW 0.20 (belegt, Bauer FUN_01e04c4e app 0x4b8e, Abbildung 0x4cae..0x4d40, Gyro-Skala FUN_01e04af4):
++ *   Bericht X = Sensor Y, Bericht Y = ~Sensor X (= -X-1, Negation per NOT), Bericht Z = Sensor Z,
++ *   für Beschleunigung und Gyro gleich; Beschleunigung 1:1, Gyro * 258 / 255 (Werk ohne Sättigung, hier begrenzt).
++ *   3 Proben à 12 Byte (Beschl. X Y Z, Gyro X Y Z, s16 LE), die neueste zuerst.
++ * Unterschied zum Werk: das Werk tastet alle 5/6 ms ab (Ring aus 3), wir einmal je 10-ms-Runde. Probe 0 = neueste,
++ * Probe 1 = Mittel aus neuester und voriger, Probe 2 = vorige (Vermutung: die Konsole rechnet je Probe mit 5 ms).
++ * Keine Kalibrierung im Gerät (Werk zieht gespeicherte Offsets ab, außer AccZ); die SPI-Werte in c2_switch.c sind
++ * dazu passend neutral (Offset 0). Ist die neueste Probe älter als 2 Runden (Plus/Minus gedrückt, Fehler), wird der
++ * Gyro 0 gemeldet (sonst liefe eine alte Drehung weiter), die Beschleunigung bleibt. Rückgabe 0 = keine Probe. */
++static s16 gyro_skala(s16 v)
++{
++    s32 x = (s32)v * 258 / 255;
++    return x > 32767 ? 32767 : x < -32768 ? -32768 : (s16)x;
++}
++
++static void probe_abbilden(const s16 *s, int gyro_null, u8 *d)
++{
++    s16 w[6];
++    w[0] = s[4];           /* Beschl. X = Sensor AY */
++    w[1] = (s16)~s[3];     /* Beschl. Y = ~Sensor AX */
++    w[2] = s[5];           /* Beschl. Z = Sensor AZ */
++    w[3] = gyro_null ? 0 : gyro_skala(s[1]);         /* Gyro X = f(GY) */
++    w[4] = gyro_null ? 0 : (s16)~gyro_skala(s[0]);   /* Gyro Y = ~f(GX) */
++    w[5] = gyro_null ? 0 : gyro_skala(s[2]);         /* Gyro Z = f(GZ) */
++    for (int i = 0; i < 6; i++) {
++        d[2 * i] = (u16)w[i] & 0xFF;
++        d[2 * i + 1] = (u16)w[i] >> 8;
++    }
++}
++
++int chitu_gyro_bericht(u8 *d36)
++{
++    memset(d36, 0, 36);
++    if (!dauer.n_gueltig || dauer.gesperrt) {
++        return 0;
++    }
++    int gyro_null = dauer.alter > 2;
++    s16 mitte[6];
++    const s16 *vor = dauer.n_gueltig > 1 ? dauer.p[1] : dauer.p[0];
++    for (int i = 0; i < 6; i++) {
++        mitte[i] = (s16)(((s32)dauer.p[0][i] + vor[i]) / 2);
++    }
++    probe_abbilden(dauer.p[0], gyro_null, d36);
++    probe_abbilden(mitte, gyro_null, d36 + 12);
++    probe_abbilden(vor, gyro_null, d36 + 24);
++    return 1;
++}
++
++/* „chitu gyro bericht“: Probe 0 und 1 so, wie sie im 0x30 stünden (Puffer statisch: nur Befehls-Task, Stack klein) */
++static void bericht_melden(void)
++{
++    static u8 d[36];
++    static s16 v[18];
++    int g = chitu_gyro_bericht(d);
++    for (int i = 0; i < 18; i++) {
++        v[i] = (s16)(d[2 * i] | (d[2 * i + 1] << 8));
++    }
++    c2_log("ok: gyro bericht gueltig=%d alter=%u a=%d,%d,%d g=%d,%d,%d | a=%d,%d,%d g=%d,%d,%d\r\n", g, dauer.alter,
++           v[0], v[1], v[2], v[3], v[4], v[5], v[12], v[13], v[14], v[15], v[16], v[17]);
++    c2_log("  dauer=%u gesperrt=%u ok=%lu fehler=%lu abbrueche=%lu belegt=%lu max=%luus\r\n", dauer.befehl,
++           dauer.gesperrt, dauer.ok, dauer.fehler, dauer.abbrueche, dauer.belegt, dauer.us_max);
++}
++
++/* ---------- Befehle „chitu gyro …“ ---------- */
++/* Liest eine Zahl (hex, optional 0x; oder dezimal). Danach muss Leerzeichen oder Ende folgen. */
++static const char *zahl_b(const char *p, u32 *v, int basis)
++{
++    while (*p == ' ') {
++        p++;
++    }
++    if (basis == 16 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
++        p += 2;
++    }
++    u32 x = 0;
++    const char *anfang = p;
++    for (;; p++) {
++        int d;
++        if (*p >= '0' && *p <= '9') {
++            d = *p - '0';
++        } else if (basis == 16 && *p >= 'a' && *p <= 'f') {
++            d = *p - 'a' + 10;
++        } else if (basis == 16 && *p >= 'A' && *p <= 'F') {
++            d = *p - 'A' + 10;
++        } else {
++            break;
++        }
++        x = x * basis + d;
++        if (x > 0xFFFF) {
++            return NULL;
++        }
++    }
++    if (p == anfang || (*p && *p != ' ')) {
++        return NULL;
++    }
++    *v = x;
++    return p;
++}
++
++static const char *zahl(const char *p, u32 *v)
++{
++    return zahl_b(p, v, 16);
++}
++
++static int nur_leer(const char *p)
++{
++    while (*p == ' ') {
++        p++;
++    }
++    return !*p;
++}
++
++static int auftrag_frei(void)
++{
++    if (auftrag.art != A_NICHTS) {
++        c2_log("fehler: gyro beschäftigt\r\n");
++        return 0;
++    }
++    return 1;
++}
++
++void chitu_gyro_befehl(const char *a)
++{
++    u32 adr, reg, n, ms;
++    const char *p;
++    if (!strcmp(a, "suche")) {
++        if (auftrag_frei()) {
++            auftrag.suche_adr = 0x08;
++            auftrag.suche_treffer = 0;
++            auftrag.suche_us = 0;
++            auftrag.belegt = 0;
++            auftrag.art = A_SUCHE;
++        }
++        return;
++    }
++    if (!strncmp(a, "lies ", 5) && (p = zahl(a + 5, &adr)) && (p = zahl(p, &reg))) {
++        n = 1;
++        if (!nur_leer(p) && (!(p = zahl(p, &n)) || !nur_leer(p))) {
++            n = 0;
++        }
++        if (adr < 0x08 || adr > 0x77 || reg > 0xFF || n < 1 || n > LIVE_MAX) {
++            c2_log("fehler: gyro lies <adr 08..77> <reg> [anzahl 1..18] (hex)\r\n");
++            return;
++        }
++        if (KOSTEN(n) * warte > BUDGET_JETZT) {
++            c2_log("fehler: gyro lies: bei warte=%u höchstens %d Byte\r\n", warte, (BUDGET_JETZT / warte - 119) / 36);
++            return;
++        }
++        if (auftrag_frei()) {
++            auftrag.adr = adr;
++            auftrag.reg = reg;
++            auftrag.n = n;
++            auftrag.belegt = 0;
++            bytes_zurueck();
++            auftrag.art = A_LIES;
++        }
++        return;
++    }
++    if (!strncmp(a, "schreib ", 8) && (p = zahl(a + 8, &adr)) && (p = zahl(p, &reg)) && (p = zahl(p, &n)) &&
++        nur_leer(p)) {
++        if (adr < 0x08 || adr > 0x77 || reg > 0xFF || n > 0xFF) {
++            c2_log("fehler: gyro schreib <adr 08..77> <reg> <wert> (hex)\r\n");
++            return;
++        }
++        if (auftrag_frei()) {
++            auftrag.adr = adr;
++            auftrag.reg = reg;
++            auftrag.wert = n;
++            auftrag.belegt = 0;
++            auftrag.art = A_SCHREIB;
++        }
++        return;
++    }
++    if (!strncmp(a, "test ", 5) && (p = zahl_b(a + 5, &n, 10)) && nur_leer(p)) {
++        if (n < 1 || n > 3000) {
++            c2_log("fehler: gyro test <1..3000> (dezimal, eine Lesung je Runde = 10 ms)\r\n");
++            return;
++        }
++        if (KOSTEN_TEST * warte > BUDGET_JETZT) {
++            c2_log("fehler: gyro test: warte höchstens %d\r\n", BUDGET_JETZT / KOSTEN_TEST);
++            return;
++        }
++        if (auftrag_frei()) {
++            auftrag.test_rest = auftrag.test_n = n;
++            auftrag.test_fehler = 0;
++            auftrag.test_us_max = auftrag.test_us_summe = 0;
++            auftrag.belegt = 0;
++            bytes_zurueck();
++            takt_warte_summe = takt_warte_n = takt_verfehlt = 0;
++            auftrag.art = A_TEST;
++        }
++        return;
++    }
++    if (!strcmp(a, "takten 0") || !strcmp(a, "takten 1")) {
++        if (auftrag.art != A_NICHTS || live.an) {
++            c2_log("fehler: gyro takten: erst Auftrag/live beenden\r\n");
++            return;
++        }
++        takten = a[7] == '1';
++        c2_log("ok: gyro takten=%u\r\n", takten);
++        return;
++    }
++    if (!strcmp(a, "stick")) {
++        c2_log("ok: gyro stick-isr n=%lu letzt=%luus max=%luus\r\n", chitu_stick_isr_n,
++               tick_ns(chitu_stick_isr_letzt) / 1000, tick_ns(chitu_stick_isr_max) / 1000);
++        return;
++    }
++    if (!strcmp(a, "luecken")) {
++        luecken_suchen();
++        return;
++    }
++    if (!strcmp(a, "schnell 0") || !strcmp(a, "schnell 1")) {
++        if (auftrag.art != A_NICHTS || live.an) {
++            c2_log("fehler: gyro schnell: erst Auftrag/live beenden\r\n");
++            return;
++        }
++        schnell = a[8] == '1';
++        c2_log("ok: gyro schnell=%u\r\n", schnell);
++        return;
++    }
++    if (!strcmp(a, "sperre kurz") || !strcmp(a, "sperre sdk")) {
++        if (auftrag.art != A_NICHTS || live.an) {
++            c2_log("fehler: gyro sperre: erst Auftrag/live beenden\r\n");
++            return;
++        }
++        sperre_kurz = a[7] == 'k';
++        c2_log("ok: gyro sperre=%s\r\n", sperre_kurz ? "kurz" : "sdk");
++        return;
++    }
++    if (!strcmp(a, "mess")) {
++        if (live.an) {
++            c2_log("fehler: gyro mess: erst live aus\r\n");
++            return;
++        }
++        if (auftrag_frei()) {
++            auftrag.belegt = 0;
++            auftrag.art = A_MESS;
++        }
++        return;
++    }
++    if (!strcmp(a, "werte")) {
++        if (auftrag_frei()) {
++            auftrag.belegt = 0;
++            auftrag.art = A_WERTE;
++        }
++        return;
++    }
++    if (!strcmp(a, "init")) {
++        init_versuche = 0;
++        init_runde = INIT_NACH_RUNDEN;
++        init_stand = 0;
++        c2_log("ok: gyro init angestoßen\r\n");
++        return;
++    }
++    if (!strcmp(a, "status")) {
++        c2_log("ok: gyro status init=%d (1 ok, 0 offen, -1 kein Sensor/aufgegeben) warte=%u live=%u "
++               "ok=%lu fehler=%lu sperre=%s schnell=%u\r\n", init_stand, warte, live.an, live.ok, live.fehler,
++               sperre_kurz ? "kurz" : "sdk", schnell);
++        return;
++    }
++    if (!strcmp(a, "dauer 0") || !strcmp(a, "dauer 1")) {
++        dauer.befehl = a[6] == '1';
++        if (dauer.befehl) {
++            dauer.gesperrt = 0;
++            dauer.folge = 0;
++        }
++        c2_log("ok: gyro dauer=%u (im Switch-Modus immer an)\r\n", dauer.befehl);
++        return;
++    }
++    if (!strcmp(a, "bericht")) {
++        bericht_melden();
++        return;
++    }
++    if (!strcmp(a, "live aus")) {
++        live.an = 0;
++        c2_log("ok: gyro live aus (ok %lu, Fehler %lu)\r\n", live.ok, live.fehler);
++        return;
++    }
++    if (!strncmp(a, "live ", 5) && (p = zahl(a + 5, &adr)) && (p = zahl(p, &reg)) && (p = zahl(p, &n)) &&
++        (p = zahl_b(p, &ms, 10)) && nur_leer(p)) {
++        if (adr < 0x08 || adr > 0x77 || reg > 0xFF || n < 1 || n > LIVE_MAX || ms < 10 || ms > 10000) {
++            c2_log("fehler: gyro live <adr> <reg> <anzahl 1..18 hex> <ms 10..10000> | live aus\r\n");
++            return;
++        }
++        if (KOSTEN(n) * warte > BUDGET_JETZT) {
++            c2_log("fehler: gyro live: bei warte=%u höchstens %d Byte\r\n", warte, (BUDGET_JETZT / warte - 119) / 36);
++            return;
++        }
++        live.an = 0;
++        live.adr = adr;
++        live.reg = reg;
++        live.n = n;
++        live.alle_runden = ms / 10;
++        live.zaehler = 0;
++        live.ok = live.fehler = 0;
++        live.fehler_folge = 0;
++        live.an = 1;
++        c2_log("ok: gyro live 0x%02lx/0x%02lx %lu Byte alle %lu ms\r\n", adr, reg, n, (ms / 10) * 10);
++        return;
++    }
++    if (!strncmp(a, "warte ", 6) && (p = zahl_b(a + 6, &n, 10)) && nur_leer(p) && n >= WARTE_MIN && n <= WARTE_MAX) {
++        extern int c2_switch_modus(void);
++        if ((live.an && KOSTEN(live.n) * n > BUDGET_JETZT) || (auftrag.art == A_TEST && KOSTEN_TEST * n > BUDGET_JETZT) ||
++            ((dauer.befehl || c2_switch_modus()) && KOSTEN(12) * n > BUDGET / 2) || /* Prüfung CG3 M1 */
++            (auftrag.art == A_LIES && KOSTEN(auftrag.n) * n > BUDGET_JETZT)) {
++            c2_log("fehler: gyro warte: zu langsam für den laufenden Auftrag (erst live aus bzw. Ende abwarten)\r\n");
++            return;
++        }
++        warte = n;
++        c2_log("ok: gyro warte=%lu\r\n", n);
++        return;
++    }
++    c2_log("fehler: gyro status|werte|bericht|dauer 0|1|mess|luecken|stick|takten 0|1|schnell 0|1|sperre kurz|sdk|init\r\n");
++    c2_log("  |test <n>|suche\r\n");
++    c2_log("  |lies <a> <r> [n]|schreib <a> <r> <w>|live <a> <r> <n> <ms>|live aus|warte <5..60> (hex; test/ms/warte dez.)\r\n");
 +}
 +
 +#endif

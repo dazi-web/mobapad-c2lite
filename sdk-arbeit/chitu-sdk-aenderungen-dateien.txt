@@ -41,6 +41,7 @@ apps/hid/modules/c2lite/c2_switch.h
 apps/hid/modules/c2lite/c2_xinput.c
 apps/hid/modules/c2lite/chitu.c
 apps/hid/modules/c2lite/chitu_dac.c
+apps/hid/modules/c2lite/chitu_gyro.c
 apps/hid/modules/c2lite/chitu_sinus.h
 apps/hid/modules/power/app_power_manage.c
 apps/hid/modules/user_cfg.c

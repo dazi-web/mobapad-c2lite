@@ -305,6 +305,8 @@ pub struct Status {
     pub akku: u8,
     pub usb: bool,
     pub led: u8,
+    /// Chitu ab CG4: Kontakt zum Ladedock (PA0 low), auch ohne Strom am Dock; None = Firmware meldet es nicht
+    pub dock: Option<bool>,
 }
 
 impl Status {
@@ -321,6 +323,7 @@ impl Status {
                 "akku" => s.akku = v.parse().ok()?,
                 "usb" => s.usb = v == "1",
                 "led" => s.led = u8::from_str_radix(v, 16).ok()?,
+                "pa0" => s.dock = Some(v == "0"),
                 _ => {}
             }
         }
@@ -347,6 +350,17 @@ pub const SCHIEBER_PA3: u8 = 37;
 #[cfg(test)]
 mod tests {
     use super::nachlass_finden;
+
+    #[test]
+    fn status_dock() {
+        // am Chitu 5.11. gemessen: im Dock ohne Strom, draußen am Kabel; C2 Lite ohne die Felder
+        let s = super::Status::lesen("status: tasten=0000001000000000 lx=512 ly=512 rx=511 ry=512 akku=100 usb=0 led=04 dock=0 pa0=0").unwrap();
+        assert_eq!((s.usb, s.dock), (false, Some(true)));
+        let s = super::Status::lesen("status: tasten=0000001000000000 lx=512 ly=512 rx=511 ry=512 akku=100 usb=1 led=04 dock=0 pa0=1").unwrap();
+        assert_eq!((s.usb, s.dock), (true, Some(false)));
+        let s = super::Status::lesen("status: tasten=0000000000000000 lx=512 ly=512 rx=511 ry=512 akku=80 usb=1 led=04").unwrap();
+        assert_eq!(s.dock, None);
+    }
 
     #[test]
     fn serie_und_anzeige() {

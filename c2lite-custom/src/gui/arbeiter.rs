@@ -36,6 +36,8 @@ pub enum Auftrag {
     /// Befehle nacheinander; Antwortzeilen aller Befehle gesammelt
     Befehle(Zweck, Vec<String>),
     Live(bool),
+    /// Gyro-Seite (Chitu): Dauerlesen an/aus und „chitu gyro bericht“ laufend abfragen
+    GyroLive(bool),
     Update(Vec<u8>),
     /// Wecksignal eines Joy-Con 2 auffangen und die Kennung im Controller speichern; das Flag bricht ab
     WeckenEinrichten(Arc<AtomicBool>),
@@ -51,6 +53,9 @@ pub enum Meldung {
     Getrennt(Option<String>),
     Antwort(Zweck, Result<Vec<String>, String>),
     Status(Status),
+    /// Sensorstand beim Start der Gyro-Seite: 1 bereit, 0 wird eingestellt, -1 kein Sensor; Err = kein Chitu/zu alt
+    GyroSensor(Result<i32, String>),
+    Gyro(crate::gyro::Probe),
     Fortschritt(f32),
     UpdateFertig(Result<(), String>),
     WeckenFertig(Result<Kennung, String>),
@@ -122,6 +127,8 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
         let mut kanal: Option<Box<dyn Kanal>> = None;
         let mut kanal_weg = Weg::Usb;
         let mut live = false;
+        let mut gyro_live = false;
+        let mut letzte_gyro = Instant::now();
         let mut fehler_in_folge = 0;
         let mut letzter_status = Instant::now();
         let mut letzte_pruefung = Instant::now();
@@ -129,7 +136,7 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
         // alte Werte weiter als „verbunden“ zu zeigen
         let usb_weg = |kanal: &Option<Box<dyn Kanal>>, weg: Weg| kanal.is_some() && weg == Weg::Usb && geraet::finden().is_none();
         loop {
-            let warten = if live && kanal.is_some() { Duration::from_millis(15) } else { Duration::from_millis(250) };
+            let warten = if (live || gyro_live) && kanal.is_some() { Duration::from_millis(15) } else { Duration::from_millis(250) };
             match rx.recv_timeout(warten) {
                 Ok(Auftrag::Verbinden(weg)) => {
                     kanal = None;
@@ -151,6 +158,21 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     senden(Meldung::Getrennt(None));
                 }
                 Ok(Auftrag::Live(an)) => live = an,
+                Ok(Auftrag::GyroLive(an)) => {
+                    gyro_live = false;
+                    if let Some(k) = kanal.as_mut() {
+                        if an {
+                            let r = crate::gyro::vorbereiten(k.as_mut());
+                            if r == Ok(1) {
+                                gyro_live = crate::gyro::dauer(k.as_mut(), true).is_ok();
+                            }
+                            fehler_in_folge = 0;
+                            senden(Meldung::GyroSensor(r));
+                        } else {
+                            let _ = crate::gyro::dauer(k.as_mut(), false);
+                        }
+                    }
+                }
                 Ok(Auftrag::Befehle(zweck, befehle)) => {
                     let ausfuehren = |k: &mut Box<dyn Kanal>| -> Result<Vec<String>, String> {
                         let mut alle = Vec::new();
@@ -239,7 +261,7 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     senden(Meldung::MusikGesendet(r));
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    if !live {
+                    if !live && !gyro_live {
                         if let Some(k) = kanal.as_mut() {
                             k.ablesen(); /* Port offen halten heißt auch abholen, sonst hängt die Firmware beim Senden */
                         }
@@ -255,6 +277,25 @@ pub fn starten(ctx: egui::Context, rx: Receiver<Auftrag>, tx: Sender<Meldung>) {
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => return,
+            }
+            if gyro_live && letzte_gyro.elapsed() >= Duration::from_millis(30) {
+                if let Some(k) = kanal.as_mut() {
+                    letzte_gyro = Instant::now();
+                    match crate::gyro::probe_holen(k.as_mut()) {
+                        Ok(p) => {
+                            fehler_in_folge = 0;
+                            senden(Meldung::Gyro(p));
+                        }
+                        Err(_) => {
+                            fehler_in_folge += 1;
+                            if fehler_in_folge >= 4 {
+                                kanal = None;
+                                gyro_live = false;
+                                senden(Meldung::Getrennt(Some("Verbindung zum Controller verloren".into())));
+                            }
+                        }
+                    }
+                }
             }
             if live && letzter_status.elapsed() >= Duration::from_millis(30) {
                 if let Some(k) = kanal.as_mut() {

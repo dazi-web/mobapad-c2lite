@@ -85,9 +85,17 @@ Läuft (an einem Gerät getestet):
   5 LEDs im Ladedock: beim Einsetzen ein Lichtschweif, beim Laden ein Balken mit dem Ladestand, voll die
   Regenbogen-Welle wie ab Werk; spielt Musik, leuchtet das Dock passend zu den Noten. Das Dock-Licht schickt der
   Controller über die Kontakte, es braucht ein Netzteil am Dock (ein Laptop-USB-Port reichte im Test nicht).
+- Switch: Schieber auf „Switch“ = Pro Controller wie bei der Werks-Firmware, per USB-Kabel und Bluetooth. An der
+  Switch 2 getestet: Kopplung über das Kabel, Tasten, Bewegungssteuerung (Neigungslenkung in Mario Kart).
+- Bewegungssensor: Neigen und Drehen gehen als Bewegungsdaten des Pro Controllers an die Switch. Im Programm zeigt
+  die Seite „Gyro“ die Lage in 3D, Neigung und Drehrate und führt durch einen kurzen Test; auf der Kommandozeile
+  `c2lite-custom gyro` (Test) oder `c2lite-custom gyro live`.
+- Ladedock: Die Übersicht im Programm zeigt „im Ladedock“ oder „im Ladedock, ohne Strom“ (ab chitu-CG4).
 - Updates per USB-Kabel, Rückweg zur Werks-Firmware
 
-Fehlt noch: Switch / Switch 2, Bewegungssensor, NFC. Startet der Controller unerwartet
+Fehlt noch: Switch 2 als „Pro Controller 2“ (die Switch 2 nimmt das Chitu als Pro Controller; Wecken der Konsole ist
+nicht getestet), Switch 1 ist nicht getestet, NFC. Den Bewegungssensor liest die Firmware 100-mal je Sekunde, die
+Werks-Firmware etwa 180-mal; im Spiel fiel das nicht auf. Startet der Controller unerwartet
 neu, sichert das Programm beim nächsten Verbinden das Protokoll nach `~/.cache/c2lite-custom/`.
 
 Installieren (nur Linux, nur über das USB-Kabel):
@@ -111,6 +119,8 @@ Wenn es im Takt brummt, Home + Y + X halten, bis das Brummen aufhört. Das Progr
   gibt es unten links eine Auswahl.
 
 ![Seite „Musik“ mit Klavier und Stückliste (Chitu 2 HD)](docs/bilder/musik.png)
+
+![Seite „Gyro“: Lage in 3D, Neigung und Drehrate (Chitu 2 HD)](docs/bilder/gyro.png)
 
 **Hinweis zu Musik und Vibration:** Lange oder laute Töne belasten die Motoren, die Mechanik und den Akku stärker als
 normales Rumble. Die Firmware begrenzt den Pegel (50 %) und die Dauer (30 s am Stück), ob das für jedes Gerät reicht,

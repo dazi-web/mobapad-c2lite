@@ -17,6 +17,7 @@ mod ff;
 mod bt_pc;
 mod geraet;
 mod gui;
+mod gyro;
 mod musik;
 mod paket;
 mod sprache;
@@ -86,6 +87,8 @@ Befehle:
                                Noten: A3:400 C#4:200 250:300 P:100 (Name+Oktave oder Hz, :ms, P = Pause, # Kommentar).
                                --lage auto legt die Melodie um die Motor-Resonanz (~250 Hz)
   musik stop                   Musik sofort anhalten
+  gyro                         nur Chitu 2 HD: geführter Gyro-Test (Lagen und Drehachsen werden abgehakt)
+  gyro live                    nur Chitu 2 HD: Beschleunigung und Drehrate live (Achsen wie an der Switch)
   download-modus               in den ROM-Download-Modus springen (zum Flashen)
   download lesen <datei> [adresse] [länge]
                                im ROM-Download-Modus Flash lesen (Vorgabe: ganzer Flash, 1 MB); braucht root oder
@@ -160,6 +163,8 @@ Commands:
                                Notes: A3:400 C#4:200 250:300 P:100 (name+octave or Hz, :ms, P = rest, # comment).
                                --lage auto moves the melody around the motor resonance (~250 Hz)
   musik stop                   stop the music at once
+  gyro                         Chitu 2 HD only: guided gyro test (positions and rotation axes are ticked off)
+  gyro live                    Chitu 2 HD only: live acceleration and rotation rate (axes as on the Switch)
   download-modus               jump into the ROM download mode (for flashing)
   download lesen <file> [address] [length]
                                read flash in ROM download mode (default: whole flash, 1 MB); needs root or
@@ -322,6 +327,7 @@ fn ausfuehren(g: &mut dyn Kanal, args: &[String]) -> Result<(), String> {
         }
         "wecken" => wecken_befehl(g, rest(1)),
         "musik" => musik::befehl(g, &args[1..]),
+        "gyro" => gyro::befehl(g, &args[1..]),
         "roh" => {
             let befehl = args[1..].join(" ");
             let alle = ["ok:", "fehler:", "info:", "status:", "einstellungen:", "akku:", "rgb:", "motor:", "switch:", "log:", "belegung:", "turbo:", "Befehle:"];

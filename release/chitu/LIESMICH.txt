@@ -1,4 +1,4 @@
-Chitu 2 HD Custom, Stand chitu-CRi (Firmware für den Mobapad Chitu 2 HD) – EXPERIMENTELL
+Chitu 2 HD Custom, Stand chitu-CG4 (Firmware für den Mobapad Chitu 2 HD) – EXPERIMENTELL
 
 jl_isd.bin          Erstinstallation von der Werks-Firmware, nur über das USB-Kabel:
                     c2lite-custom installieren release/chitu/jl_isd.bin --usb
@@ -10,6 +10,7 @@ Das Werkzeug prüft vor dem Schreiben, ob Firmware und Controller zusammenpassen
 und umgekehrt). Rückweg zur Werks-Firmware: c2lite-custom werk-zurueck <Sicherung aus ~/c2lite-sicherung>.
 Musik und Vibration belasten Motoren und Akku; die Firmware begrenzt Pegel (50 %) und Dauer (30 s am Stück),
 Schäden sind trotzdem möglich. Vorher den Abschnitt „Chitu 2 HD“ und „Risiken“ in der README lesen.
+Schieber auf „Switch“: Pro Controller mit Bewegungssensor (an der Switch 2 getestet), auf „PC“: Xbox-Controller.
 Nutzung auf eigenes Risiko.
 
 English: EXPERIMENTAL firmware for the Mobapad Chitu 2 HD. jl_isd.bin = first install from the factory firmware over
@@ -18,4 +19,5 @@ Home + Y + X while it rumbles); db_update_data.bin = update (`c2lite-custom upda
 The tool refuses to write firmware meant for the other controller. Way back: `c2lite-custom werk-zurueck <backup>`.
 Music and vibration stress the motors and battery; the firmware limits level (50 %) and duration (30 s in a row),
 damage is still possible. Check with `sha256sum -c SHA256SUMS`. Read the "Chitu 2 HD" and "Risks" sections in the
-README first. Use at your own risk.
+README first. Slider on "Switch": Pro Controller with motion sensor (tested on the Switch 2), on "PC": Xbox controller.
+Use at your own risk.

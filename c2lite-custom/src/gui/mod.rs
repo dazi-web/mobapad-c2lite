@@ -4,6 +4,7 @@
 mod arbeiter;
 mod bild;
 mod daten;
+mod gyro_seite;
 #[cfg(target_os = "linux")]
 mod installieren;
 #[cfg(target_os = "linux")]
@@ -50,6 +51,8 @@ enum Seite {
     Installieren,
     /// nur am Chitu 2 HD (HD-Rumble-Motoren)
     Musik,
+    /// nur am Chitu 2 HD (Bewegungssensor, ab Firmware chitu-CG3)
+    Gyro,
 }
 
 const SEITEN: &[(Seite, &str, &str)] = &[
@@ -61,6 +64,7 @@ const SEITEN: &[(Seite, &str, &str)] = &[
     (Seite::Diagnose, icon::TERMINAL, "Diagnose"),
     (Seite::Backup, icon::ARCHIVE, "Backup"),
     (Seite::Musik, icon::MUSIC_NOTES, "Musik"),
+    (Seite::Gyro, icon::COMPASS, "Gyro"),
     (Seite::Installieren, icon::DOWNLOAD_SIMPLE, "Installieren"),
 ];
 
@@ -120,6 +124,10 @@ struct App {
     /// läuft „Wecken einrichten“: Abbruch-Flag und Start
     weck_lauscht: Option<(Arc<AtomicBool>, Instant)>,
     musik: Musik,
+    /// Seite „Gyro“ (Chitu): Sensorstand, letzte Probe, geführter Test
+    gyro: gyro_seite::GyroZustand,
+    /// Gyro-Abfrage im Hintergrund-Thread läuft (Seite Gyro offen, verbunden, Chitu)
+    gyro_live: bool,
     /// Controller am USB (Port, Anzeige), höchstens einmal je Sekunde neu gelesen
     usb_liste: (Option<Instant>, Vec<(String, String)>),
 }
@@ -287,6 +295,7 @@ impl App {
                 Ok("backup") => Seite::Backup,
                 Ok("installieren") => Seite::Installieren,
                 Ok("musik") => Seite::Musik,
+                Ok("gyro") => Seite::Gyro,
                 _ => Seite::Uebersicht,
             },
             verbindung: Verbindung::Sucht(Weg::Usb),
@@ -323,6 +332,8 @@ impl App {
             weck: None,
             weck_lauscht: None,
             musik: Default::default(),
+            gyro: Default::default(),
+            gyro_live: false,
             usb_liste: (None, Vec::new()),
         };
         // C2LITE_DEMO=tasten|uebertragung|fertig: Ablauf-Anzeige der Installation für Screenshots, ohne Gerät
@@ -425,6 +436,8 @@ impl App {
                     self.getestet |= s.tasten;
                     self.status = Some(s);
                 }
+                Meldung::GyroSensor(r) => self.gyro.sensor = Some(r),
+                Meldung::Gyro(p) => self.gyro.neu(p),
                 Meldung::Fortschritt(a) => self.update_fortschritt = Some(a),
                 Meldung::UpdateFertig(r) => {
                     self.update_fortschritt = None;
@@ -481,6 +494,9 @@ impl App {
             Zweck::Info => {
                 if let Some(i) = zeilen.iter().find_map(|z| Info::lesen(z)) {
                     self.info = Some(i);
+                }
+                if let Some(s) = zeilen.iter().filter(|z| z.starts_with("status:")).find_map(|z| Status::lesen(z)) {
+                    self.status = Some(s);
                 }
             }
             Zweck::SwitchDiag => {
@@ -632,6 +648,15 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Beim Schließen mit offener Gyro-Seite das Dauerlesen in der Firmware abschalten (sonst liest sie bis zum
+    /// Neustart weiter); der Hintergrund-Thread braucht dafür einen Befehl, also kurz warten
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.gyro_live {
+            let _ = self.tx.send(Auftrag::GyroLive(false));
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.meldungen_verarbeiten();
@@ -664,9 +689,22 @@ impl eframe::App for App {
             self.live = live;
             let _ = self.tx.send(Auftrag::Live(live));
         }
+        let gyro_live = self.seite == Seite::Gyro && self.ist_chitu();
+        if gyro_live != self.gyro_live {
+            self.gyro_live = gyro_live;
+            if gyro_live {
+                self.gyro.sensor = None;
+            }
+            let _ = self.tx.send(Auftrag::GyroLive(gyro_live));
+        }
         if self.verbunden() && self.seite == Seite::Uebersicht && self.letzte_info.elapsed() > Duration::from_secs(5) {
             self.letzte_info = Instant::now();
-            self.senden(Zweck::Info, vec!["info".into()]);
+            // am Chitu auch „status“: dort steht der Kontakt zum Ladedock (ab CG4)
+            let mut befehle = vec!["info".to_string()];
+            if self.ist_chitu() {
+                befehle.push("status".into());
+            }
+            self.senden(Zweck::Info, befehle);
         }
         if self.verbunden() {
             ctx.request_repaint_after(Duration::from_secs(5));
@@ -697,6 +735,7 @@ impl eframe::App for App {
                                 Seite::Diagnose => self.diagnose_seite(ui),
                                 Seite::Backup => self.backup_seite(ui),
                                 Seite::Musik => self.musik_seite(ui),
+                                Seite::Gyro => self.gyro_seite(ui),
                                 #[cfg(target_os = "linux")]
                                 Seite::Installieren => self.installieren_seite(ui),
                                 #[cfg(not(target_os = "linux"))]
@@ -756,11 +795,12 @@ impl App {
         });
         ui.add_space(22.0);
         let chitu = self.ist_chitu();
-        if self.seite == Seite::Musik && !chitu && self.info.is_some() {
+        let nur_chitu = |s: &Seite| matches!(s, Seite::Musik | Seite::Gyro);
+        if nur_chitu(&self.seite) && !chitu && self.info.is_some() {
             self.seite = Seite::Uebersicht;
         }
         for (seite, ic, name) in SEITEN {
-            if *seite == Seite::Musik && !chitu {
+            if nur_chitu(seite) && !chitu {
                 continue;
             }
             let gewaehlt = self.seite == *seite;
@@ -973,7 +1013,23 @@ impl App {
                     Some(i) if i.akku_prozent > 0 => {
                         let ic = if i.usb5v { icon::BATTERY_CHARGING } else { icon::BATTERY_FULL };
                         ui.label(RichText::new(format!("{ic}  {} %", i.akku_prozent)).size(26.0).strong());
-                        hinweis(ui, &format!("{:.2} V, {}", i.akku_mv as f32 / 1000.0, t(if i.usb5v { "am USB" } else { "Akkubetrieb" })));
+                        // Chitu ab CG4: Ladedock über den Kontakt PA0 (am Gerät belegt 5.11.: im Dock 0, draußen 1,
+                        // auch ohne Strom); am Laptop-USB liefert das Dock oft keinen Strom
+                        let dock = self.status.as_ref().and_then(|s| s.dock).filter(|_| self.ist_chitu());
+                        let woher = match dock {
+                            Some(true) if i.usb5v => "im Ladedock",
+                            Some(true) => "im Ladedock, ohne Strom",
+                            _ if i.usb5v => "am USB",
+                            _ => "Akkubetrieb",
+                        };
+                        hinweis(ui, &format!("{:.2} V, {}", i.akku_mv as f32 / 1000.0, t(woher)));
+                        if dock == Some(true) && !i.usb5v {
+                            ui.label(
+                                RichText::new(t("Das Dock bekommt keinen Strom: an ein Netzteil stecken (ein Laptop-USB-Port reicht oft nicht)."))
+                                    .small()
+                                    .color(c.warnung),
+                            );
+                        }
                     }
                     _ => {
                         ui.label(RichText::new(t("...")).size(26.0));

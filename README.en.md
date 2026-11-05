@@ -86,9 +86,18 @@ Working (tested on one unit):
   5 LEDs in the charging dock: a light trail when docked, a bar with the charge level while charging, the rainbow
   wave from the factory firmware when full; while music plays, the dock lights up with the notes. The controller
   sends the dock light through the contacts; the dock needs a power supply (a laptop USB port was not enough in tests).
+- Switch: slider on "Switch" = Pro Controller as with the factory firmware, over the USB cable and Bluetooth. Tested
+  on the Switch 2: pairing over the cable, buttons, motion controls (tilt steering in Mario Kart).
+- Motion sensor: tilting and turning go to the Switch as the Pro Controller's motion data. In the program, the "Gyro"
+  page shows the position in 3D, tilt and rotation rate and guides you through a short test; on the command line
+  `c2lite-custom gyro` (test) or `c2lite-custom gyro live`.
+- Charging dock: the overview in the program shows "in the charging dock" or "in the charging dock, no power" (from
+  chitu-CG4).
 - Updates over the USB cable, way back to the factory firmware
 
-Missing so far: Switch / Switch 2, motion sensor, NFC. If the controller restarts
+Missing so far: Switch 2 as "Pro Controller 2" (the Switch 2 accepts the Chitu as a Pro Controller; waking the console
+is not tested), Switch 1 is not tested, NFC. The firmware reads the motion sensor 100 times per second, the factory
+firmware about 180 times; it was not noticeable in a game. If the controller restarts
 unexpectedly, the program saves the log to `~/.cache/c2lite-custom/` on the next connection.
 
 Install (Linux only, USB cable only):
@@ -111,6 +120,8 @@ cable. When it rumbles in a rhythm, hold Home + Y + X until the rumbling stops. 
   selector at the bottom left.
 
 ![The "Musik" page with piano and list of pieces (Chitu 2 HD)](docs/bilder/musik.png)
+
+![The "Gyro" page: position in 3D, tilt and rotation rate (Chitu 2 HD)](docs/bilder/gyro.png)
 
 **Note on music and vibration:** Long or loud tones stress the motors, the mechanics and the battery more than normal
 rumble. The firmware limits the level (50 %) and the duration (30 s in a row); whether that is enough for every unit is
